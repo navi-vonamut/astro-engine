@@ -1,0 +1,15 @@
+services:
+  engine:
+    build: .
+    container_name: kerykeion_engine 
+    restart: always
+    ports:
+      - "8001:8000" 
+    networks:
+      - astro-network 
+    environment:
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+
+networks:
+  astro-network:
+    external: true 

@@ -1,2 +1,134 @@
-# astro-engine
-Public astrological calculation engine built on top of Swiss Ephemeris via Kerykeion. Provides natal charts, transits and synastry calculations through a simple HTTP API.  Designed as a standalone computational service, decoupled from business logic, UI and interpretation layers.
+# Kerykeion Calculation Engine
+Astro Engine is an open-source astrological calculation service built on top of
+[Kerykeion](https://pypi.org/project/kerykeion/) and Swiss Ephemeris.
+
+Микросервис для астрологических расчетов. Является вычислительным ядром проекта **Astro Guido**.
+Содержит логику работы с эфемеридами (Swiss Ephemeris) и библиотекой `kerykeion`.
+
+> **Важно:** Этот сервис распространяется под лицензией GPL (из-за зависимости `pyswisseph`) и должен быть изолирован от закрытого коммерческого кода (API) через сетевое взаимодействие.
+
+## 🚀 Функциональность
+
+Сервис предоставляет HTTP API для выполнения расчетов:
+1. **Натальная карта** (Планеты, Дома, Аспекты).
+2. **Транзиты** (Влияние планет на текущий момент).
+3. **Синастрия** (Совместимость двух людей).
+4. **Хорар** (Ответ на вопрос по времени возникновения).
+
+## 🛠 Установка и Запуск
+
+### Через Docker Compose (рекомендуется)
+
+Сервис является частью экосистемы и обычно запускается через общий `docker-compose.yml`:
+
+```yaml
+kerykeion:
+  build: ./apps/kerykeion_server
+  environment:
+    - INTERNAL_API_KEY=your_secret_key
+  ports:
+    - "8001:8000"
+
+### Локальный запуск (для разработки)
+
+1. **Установите зависимости:**
+```bash
+cd apps/kerykeion_server
+pip install -r requirements.txt
+
+```
+
+
+2. **Задайте переменную окружения:**
+```bash
+# Linux/Mac
+export INTERNAL_API_KEY=my_secret_key
+
+# Windows PowerShell
+$env:INTERNAL_API_KEY="my_secret_key"
+
+```
+
+
+3. **Запустите сервер:**
+```bash
+uvicorn main:app --reload --port 8001
+
+```
+
+
+
+## 🔐 Безопасность
+
+Все эндпоинты защищены. Каждый запрос обязан содержать заголовок:
+`X-API-Key: <значение INTERNAL_API_KEY>`
+
+Если ключ не совпадает или отсутствует, сервис вернет `401 Unauthorized`.
+
+## 📚 API Endpoints
+
+### 1. Натальная карта
+
+**POST** `/natal`
+
+```json
+{
+  "name": "User",
+  "date": "1990-05-03",
+  "time": "15:20:00",
+  "tz": "+03:00",
+  "lat": 55.75,
+  "lon": 37.61
+}
+
+```
+
+### 2. Транзиты (Прогноз)
+
+**POST** `/predict/daily`
+
+```json
+{
+  "name": "User",
+  "date": "1990-05-03",
+  "time": "15:20:00",
+  "tz": "+03:00",
+  "lat": 55.75,
+  "lon": 37.61,
+  "target_date": "2025-12-30"
+}
+
+```
+
+### 3. Хорар (Вопрос)
+
+**POST** `/horary`
+
+> **Обратите внимание:** Принимает время в UTC (`dt_utc`).
+
+```json
+{
+  "question": "Стоит ли покупать машину?",
+  "lat": 55.75,
+  "lon": 37.61,
+  "dt_utc": "2025-12-29T10:00:00Z"
+}
+
+```
+
+### 4. Синастрия (Совместимость)
+
+**POST** `/synastry`
+
+```json
+{
+  "p1": { ...natal_object... },
+  "p2": { ...natal_object... }
+}
+
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+It uses the Kerykeion library, which is also licensed under AGPL-3.0.
