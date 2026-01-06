@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+import datetime
 
 from kerykeion import AstrologicalSubjectFactory, AspectsFactory
 from kerykeion.chart_data_factory import ChartDataFactory
@@ -63,6 +64,7 @@ class KerykeionEngine:
         pid = mapping.get(p_name)
         if pid is None: return 0.0
         try:
+            # calc_ut returns ((lon, lat, dist, speed...), rflag)
             res = swe.calc_ut(jd, pid, 2 | 256) 
             return res[0][3]
         except: return 0.0
@@ -102,6 +104,116 @@ class KerykeionEngine:
         diff = abs(planet_abs_pos - sun_abs_pos)
         if diff > 180: diff = 360 - diff
         return diff < 8.5
+
+    # === ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ СОЛЯРА ===
+    def _get_utc_jd(self, inp: BirthInput) -> float:
+        """Помощник: превращает ввод в Julian Day (UTC)"""
+        y, m, d = _parse_ymd(inp.date)
+        hh, mm = _parse_hm(inp.time)
+        
+        offset_hours = 0.0
+        try:
+            val = str(inp.tz).replace("+", "")
+            if ":" in val:
+                parts = val.split(":")
+                sign = -1 if "-" in str(inp.tz) else 1
+                offset_hours = sign * (float(parts[0]) + float(parts[1])/60.0)
+            else:
+                offset_hours = float(val)
+        except:
+            offset_hours = 0.0
+
+        # Конвертируем локальное время в UTC
+        utc_hour = hh + (mm / 60.0) - offset_hours
+        return swe.julday(y, m, d, utc_hour)
+
+    def _find_exact_solar_return_jd(self, natal_jd_utc: float, year: int) -> float:
+        """Математика Соляра: ищет точный момент возвращения Солнца"""
+        flags = swe.FLG_SWIEPH | swe.FLG_SPEED
+        
+        # 1. Позиция натального Солнца
+        res_natal = swe.calc_ut(natal_jd_utc, swe.SUN, flags)
+        # res_natal = ((lon, lat, dist, speed...), rflag)
+        sun_natal_lon = res_natal[0][0] # <-- ИСПРАВЛЕНО: берем [0] (кортеж данных) и [0] (долгота)
+
+        # День рождения (месяц, день)
+        y_n, m_n, d_n, _ = swe.revjul(natal_jd_utc)
+        
+        # Старт поиска: полдень дня рождения в целевом году
+        jd_iter = swe.julday(year, m_n, d_n, 12.0)
+
+        for _ in range(15):
+            res = swe.calc_ut(jd_iter, swe.SUN, flags)
+            # res[0] - кортеж данных
+            vals = res[0]
+            
+            sun_curr_lon = vals[0] # Долгота
+            sun_speed = vals[3]    # Скорость (долгота/день)
+
+            delta = sun_natal_lon - sun_curr_lon
+            if delta < -180: delta += 360
+            elif delta > 180: delta -= 360
+
+            if abs(delta) < 0.00001:
+                break
+            
+            jd_iter += delta / sun_speed
+            
+        return jd_iter
+
+    # === ГЛАВНЫЙ МЕТОД СОЛЯРА ===
+    def solar_return(self, natal_inp: BirthInput, year: int, loc_lat: float, loc_lon: float, loc_tz: str) -> Dict[str, Any]:
+        """
+        Строит карту Соляра с учетом релокации.
+        """
+        print(f"\n[ENGINE] Соляр для {natal_inp.name}. Год: {year}. Локация: {loc_lat}, {loc_lon}")
+        
+        # 1. Находим момент по натальным данным (UTC)
+        natal_jd_utc = self._get_utc_jd(natal_inp) 
+        solar_jd_utc = self._find_exact_solar_return_jd(natal_jd_utc, year)
+        
+        # 2. Конвертируем в дату/время UTC
+        y, m, d, h_decimal_utc = swe.revjul(solar_jd_utc)
+        
+        # 3. Считаем локальное время для НОВОГО места
+        offset = 0.0
+        try:
+            val = str(loc_tz).replace("+", "")
+            if ":" in val:
+                parts = val.split(":")
+                sign = -1 if "-" in str(loc_tz) else 1
+                offset = sign * (float(parts[0]) + float(parts[1])/60.0)
+            else:
+                offset = float(val)
+        except:
+            pass
+            
+        h_decimal_local = h_decimal_utc + offset
+        
+        import datetime
+        dt_base = datetime.datetime(y, m, d) + datetime.timedelta(hours=h_decimal_local)
+        solar_date_str = dt_base.strftime("%Y-%m-%d")
+        solar_time_str = dt_base.strftime("%H:%M:%S")
+        
+        print(f"[ENGINE] Дата Соляра (Local): {solar_date_str} {solar_time_str}")
+
+        # 4. Строим карту на НОВЫЕ координаты
+        solar_input = BirthInput(
+            name=f"Solar {year}",
+            date=solar_date_str,
+            time=solar_time_str,
+            tz=loc_tz,
+            lat=loc_lat,
+            lon=loc_lon
+        )
+        
+        chart = self.natal(solar_input)
+        
+        chart["meta"]["type"] = "solar_return"
+        chart["meta"]["solar_year"] = year
+        chart["meta"]["location_name"] = f"{loc_lat}, {loc_lon}" 
+        
+        return chart
 
     def natal(self, inp: BirthInput) -> Dict[str, Any]:
         subject = self.build_subject(inp)
@@ -172,14 +284,12 @@ class KerykeionEngine:
             print(f"[ENGINE ERROR] AspectsFactory error: {e}")
             return []
 
-        # 1. Белый список планет (Игнорируем дома: First House и т.д.)
         PLANET_WHITELIST = {
             "Sun", "Moon", "Mercury", "Venus", "Mars", 
             "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto",
             "Chiron", "True Node", "Lilith"
         }
         
-        # 2. Только мажорные аспекты
         ALLOWED_ASPECTS = {"conjunction", "opposition", "square", "trine", "sextile"}
         
         aspects = []
@@ -192,30 +302,18 @@ class KerykeionEngine:
             asp_lower = raw_asp.lower()
             orb = float(d.get("orb") or 0.0)
 
-            # ФИЛЬТР: Только планеты из белого списка
-            # Если хоть один участник - не планета (например, House), пропускаем
             if p1_n not in PLANET_WHITELIST or p2_n not in PLANET_WHITELIST:
                 continue
 
-            # ФИЛЬТР: Только мажорные аспекты
             if asp_lower not in ALLOWED_ASPECTS:
                 continue
 
-            # ФИЛЬТР: Умные Орбисы
-            limit = 3.0 # Базовый строгий
-            
-            if "Moon" in p1_n:
-                limit = 8.0  
-            elif "Sun" in p1_n:
-                limit = 6.0
-            elif p1_n in ["Mercury", "Venus", "Mars"]:
-                limit = 5.0
-            elif p1_n in ["Jupiter", "Saturn"]:
-                limit = 4.0
-            
-            # Фиктивные точки строго
-            if any(x in p1_n for x in ["Node", "Lilith", "Chiron"]):
-                limit = 1.5
+            limit = 3.0
+            if "Moon" in p1_n: limit = 8.0  
+            elif "Sun" in p1_n: limit = 6.0
+            elif p1_n in ["Mercury", "Venus", "Mars"]: limit = 5.0
+            elif p1_n in ["Jupiter", "Saturn"]: limit = 4.0
+            if any(x in p1_n for x in ["Node", "Lilith", "Chiron"]): limit = 1.5
 
             if abs(orb) > limit:
                 continue
@@ -261,7 +359,7 @@ class KerykeionEngine:
                 "orb": a["orb"],
             })
 
-        print(f"[ENGINE RESULT] Final Aspect Count: {len(transit_aspects)} (Strict Filtered)")
+        print(f"[ENGINE RESULT] Final Aspect Count: {len(transit_aspects)}")
         return {
             "meta": {"type": "transits", "date": transit_date, "target": natal_inp.name},
             "transit_planets": transit_planets_enriched,

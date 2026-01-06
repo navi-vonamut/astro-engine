@@ -43,3 +43,10 @@ class HoraryRequest(BaseModel):
     lon: float
     question: str
     dt_utc: str
+
+class SolarReturnRequest(BaseModel):
+    user_data: NatalChartRequest = Field(..., description="Данные рождения (Усинск)")
+    year: int
+    return_lat: float | None = Field(None, description="Широта места пребывания (Н.Новгород)")
+    return_lon: float | None = Field(None, description="Долгота места пребывания (Н.Новгород)")
+    return_tz: str | None = Field(None, description="Часовой пояс места пребывания")
