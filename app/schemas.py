@@ -10,6 +10,7 @@ class NatalChartRequest(BaseModel):
     tz: str = Field(..., description="Timezone like +03:00 or Europe/Warsaw")
     lat: float
     lon: float
+    name: str = "User"
 
 
 class DailyPredictionRequest(BaseModel):

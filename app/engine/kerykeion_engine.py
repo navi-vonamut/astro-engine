@@ -7,6 +7,9 @@ from kerykeion import AstrologicalSubjectFactory, AspectsFactory
 from kerykeion.chart_data_factory import ChartDataFactory
 import swisseph as swe
 import re
+import tempfile
+import os
+from kerykeion import KerykeionChartSVG
 
 _OFFSET_RE = re.compile(r"^([+-])(\d{2}):?(\d{2})$")
 
@@ -225,12 +228,60 @@ class KerykeionEngine:
             ("Venus", "Venus"), ("Mars", "Mars"), ("Jupiter", "Jupiter"), 
             ("Saturn", "Saturn"), ("Uranus", "Uranus"), ("Neptune", "Neptune"), 
             ("Pluto", "Pluto"), ("Chiron", "Chiron"),
-            ("True_North_Lunar_Node", "True Node"), ("Mean_Lilith", "Lilith")
+            ("True_North_Lunar_Node", "True_North_Lunar_Node"), ("Mean_Lilith", "Mean_Lilith")
         ]
+        
         planets_list = []
+        
+        # 1. Собираем основные планеты и точки
         for attr, label in target_points:
             p = self._extract_planet(subject, attr, label)
             if p: planets_list.append(p)
+
+        # 2. Высчитываем Южный Узел (ровно 180 градусов от Северного)
+        north_node = next((p for p in planets_list if p["name"] == "True_North_Lunar_Node"), None)
+        if north_node:
+            sn_abs_pos = (north_node["abs_pos"] + 180) % 360
+            sn_sign_id = int(sn_abs_pos // 30)
+            sn_degree = sn_abs_pos % 30
+            
+            # Массив знаков зодиака для определения знака по sign_id
+            signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", 
+                     "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
+                     
+            planets_list.append({
+                "name": "True_South_Lunar_Node",
+                "sign": signs[sn_sign_id],
+                "sign_id": sn_sign_id,
+                "degree": sn_degree,
+                "abs_pos": sn_abs_pos,
+                "house": self._get_house_for_degree(sn_abs_pos, chart_dump.get("houses", [])), # Примерный дом
+                "is_retro": north_node["is_retro"],
+                "speed": north_node["speed"],
+                "is_stationary": north_node["is_stationary"]
+            })
+
+        # 3. Добавляем Углы карты (ASC, DSC, MC, IC) как "планеты", чтобы они красиво вывелись в таблице
+        angles = [
+            ("Ascendant", getattr(subject, "first_house", None)),
+            ("Descendant", getattr(subject, "seventh_house", None)),
+            ("Medium_Coeli", getattr(subject, "tenth_house", None)),
+            ("Imum_Coeli", getattr(subject, "fourth_house", None))
+        ]
+        
+        for ang_name, ang_obj in angles:
+            if ang_obj:
+                planets_list.append({
+                    "name": ang_name,
+                    "sign": getattr(ang_obj, "sign", ""),
+                    "sign_id": getattr(ang_obj, "sign_num", 0),
+                    "degree": getattr(ang_obj, "position", 0.0),
+                    "abs_pos": getattr(ang_obj, "abs_pos", 0.0),
+                    "house": None, # Углы сами по себе являются началом домов
+                    "is_retro": False, # Углы не бывают ретроградными
+                    "speed": 0.0,
+                    "is_stationary": False
+                })
 
         houses_list = []
         house_names = [
@@ -300,7 +351,9 @@ class KerykeionEngine:
             p2_n = d.get("p2_name", "")
             raw_asp = d.get("aspect_name") or d.get("aspect") or ""
             asp_lower = raw_asp.lower()
-            orb = float(d.get("orb") or 0.0)
+            # Берем orbit, если его нет - ищем orb, если ничего нет - 0.0
+            orb_raw = d.get("orbit", d.get("orb", 0.0)) 
+            orb = float(orb_raw if orb_raw is not None else 0.0)
 
             if p1_n not in PLANET_WHITELIST or p2_n not in PLANET_WHITELIST:
                 continue
@@ -412,3 +465,14 @@ class KerykeionEngine:
                 "partner_planets_in_owner_houses": p2_in_p1_houses
             }
         }
+    
+    def get_natal_svg(self, inp: BirthInput) -> str:
+        subject = self.build_subject(inp)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            chart = KerykeionChartSVG(subject, chart_type="Natal", new_output_directory=tmpdir)
+            chart.makeSVG()
+            
+            # Находим и читаем сгенерированный файл
+            svg_file = [f for f in os.listdir(tmpdir) if f.endswith(".svg")][0]
+            with open(os.path.join(tmpdir, svg_file), "r", encoding="utf-8") as f:
+                return f.read()

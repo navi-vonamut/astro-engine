@@ -7,8 +7,10 @@ from .routes.predict import router as predict_router
 from .routes.synastry import router as synastry_router
 from .routes.horary import router as horary_router
 from .routes.solar import router as solar_router 
+from .routes.geo import router as geo_router
+from .routes.internal import router as internal_router
 
-app = FastAPI(title="astro-engine", version="0.1.0")
+app = FastAPI(title="astro-engine", version="0.2.0")
 
 @app.get("/health")
 def health():
@@ -23,3 +25,5 @@ app.include_router(predict_router)
 app.include_router(synastry_router)
 app.include_router(horary_router)
 app.include_router(solar_router)
+app.include_router(geo_router)
+app.include_router(internal_router)

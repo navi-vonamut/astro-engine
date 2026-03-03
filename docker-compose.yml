@@ -9,6 +9,10 @@ services:
       - astro-network 
     environment:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+    volumes:
+      # Монтируем код внутрь контейнера
+      # Теперь файл major_cities.json сохранится на вашем диске
+      - ./:/app
 
 networks:
   astro-network:
