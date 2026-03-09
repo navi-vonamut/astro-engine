@@ -47,6 +47,8 @@ class BirthInput:
     tz: str
     lat: float
     lon: float
+    house_system: str = "P"
+    node_type: str = "true"
 
 class KerykeionEngine:
     def build_subject(self, inp: BirthInput):
@@ -55,7 +57,7 @@ class KerykeionEngine:
         return AstrologicalSubjectFactory.from_birth_data(
             name=inp.name, year=y, month=m, day=d, hour=hh, minute=mm,
             lng=float(inp.lon), lat=float(inp.lat),
-            tz_str=_tz_to_pytz(str(inp.tz)), online=False,
+            tz_str=_tz_to_pytz(str(inp.tz)), houses_system_identifier=inp.house_system, online=False,
         )
     
     def _get_swisseph_speed(self, jd: float, p_name: str) -> float:
@@ -73,22 +75,72 @@ class KerykeionEngine:
         except: return 0.0
 
     def _extract_planet(self, subject, attr_name: str, display_name: str) -> Optional[Dict[str, Any]]:
-        if attr_name == "Mean_Lilith": attr_name = "mean_lilith"
-        if attr_name == "True_North_Lunar_Node": attr_name = "true_north_lunar_node"
-        point = getattr(subject, attr_name.lower(), None)
-        if not point: return None
-        real_speed = self._get_swisseph_speed(subject.julian_day, display_name)
-        return {
-            "name": display_name,
-            "sign": getattr(point, "sign", ""),
-            "sign_id": getattr(point, "sign_num", 0),
-            "degree": getattr(point, "position", 0.0),
-            "abs_pos": getattr(point, "abs_pos", 0.0),
-            "house": getattr(point, "house", None),
-            "is_retro": getattr(point, "retrograde", real_speed < 0),
-            "speed": real_speed,
-            "is_stationary": abs(real_speed) < 0.05
+        attr_lower = attr_name.lower()
+        point = getattr(subject, attr_lower, None)
+        
+        # Умный поиск по алиасам для Kerykeion
+        if not point:
+            if display_name == "Mean_Lilith":
+                point = getattr(subject, "mean_apogee", None) or getattr(subject, "lilith", None)
+            elif display_name == "True_North_Lunar_Node":
+                point = getattr(subject, "true_north_lunar_node", None) or getattr(subject, "true_node", None) or getattr(subject, "north_node", None)
+            elif display_name == "Mean_North_Lunar_Node":
+                point = getattr(subject, "mean_node", None)
+                
+        # Если Kerykeion справился:
+        if point:
+            real_speed = self._get_swisseph_speed(subject.julian_day, display_name)
+            house_val = getattr(point, "house", None)
+            if isinstance(house_val, str):
+                house_map = {"First_House": 1, "Second_House": 2, "Third_House": 3, "Fourth_House": 4, 
+                             "Fifth_House": 5, "Sixth_House": 6, "Seventh_House": 7, "Eighth_House": 8, 
+                             "Ninth_House": 9, "Tenth_House": 10, "Eleventh_House": 11, "Twelfth_House": 12}
+                house_val = house_map.get(house_val, 1)
+
+            return {
+                "name": display_name,
+                "sign": getattr(point, "sign", ""),
+                "sign_id": getattr(point, "sign_num", 0),
+                "degree": getattr(point, "position", 0.0),
+                "abs_pos": getattr(point, "abs_pos", 0.0),
+                "house": house_val,
+                "is_retro": getattr(point, "retrograde", real_speed < 0),
+                "speed": real_speed,
+                "is_stationary": abs(real_speed) < 0.05
+            }
+            
+        # === 100% ЖЕЛЕЗОБЕТОННЫЙ ФОЛЛБЕК НА SWISSEPH ===
+        # Если точка так и не найдена, рассчитываем ее напрямую!
+        swe_mapping = {
+            "Mean_North_Lunar_Node": swe.MEAN_NODE,
+            "True_North_Lunar_Node": swe.TRUE_NODE,
+            "Mean_Lilith": swe.MEAN_APOG,
+            "Chiron": swe.CHIRON
         }
+        
+        if display_name in swe_mapping:
+            pid = swe_mapping[display_name]
+            # Запрашиваем точные координаты у эфемерид
+            res = swe.calc_ut(subject.julian_day, pid, swe.FLG_SWIEPH | swe.FLG_SPEED)
+            lon = res[0][0]
+            speed = res[0][3]
+            
+            signs_short = ["Ari", "Tau", "Gem", "Can", "Leo", "Vir", "Lib", "Sco", "Sag", "Cap", "Aqu", "Pis"]
+            sign_id = int(lon // 30)
+            
+            return {
+                "name": display_name,
+                "sign": signs_short[sign_id],
+                "sign_id": sign_id,
+                "degree": lon % 30,
+                "abs_pos": lon,
+                "house": None, # Дом присвоим чуть позже, когда посчитаем куспиды
+                "is_retro": speed < 0,
+                "speed": speed,
+                "is_stationary": abs(speed) < 0.05
+            }
+            
+        return None
     
     def _get_house_for_degree(self, degree: float, houses: List[Dict]) -> int:
         deg = degree % 360
@@ -223,52 +275,122 @@ class KerykeionEngine:
         chart_data = ChartDataFactory.create_natal_chart_data(subject)
         chart_dump = chart_data.model_dump(mode="json")
 
+        node_key = "True_North_Lunar_Node" if inp.node_type == "true" else "Mean_North_Lunar_Node"
+
         target_points = [
             ("Sun", "Sun"), ("Moon", "Moon"), ("Mercury", "Mercury"), 
             ("Venus", "Venus"), ("Mars", "Mars"), ("Jupiter", "Jupiter"), 
             ("Saturn", "Saturn"), ("Uranus", "Uranus"), ("Neptune", "Neptune"), 
             ("Pluto", "Pluto"), ("Chiron", "Chiron"),
-            ("True_North_Lunar_Node", "True_North_Lunar_Node"), ("Mean_Lilith", "Mean_Lilith")
+            (node_key, node_key), ("Mean_Lilith", "Mean_Lilith")
         ]
         
         planets_list = []
         
-        # 1. Собираем основные планеты и точки
+    # 1. Собираем основные планеты и точки
         for attr, label in target_points:
             p = self._extract_planet(subject, attr, label)
             if p: planets_list.append(p)
 
-        # 2. Высчитываем Южный Узел (ровно 180 градусов от Северного)
-        north_node = next((p for p in planets_list if p["name"] == "True_North_Lunar_Node"), None)
+    # 2. СНАЧАЛА ФОРМИРУЕМ ДОМА (Они нужны для узлов и фиктивных точек!)
+        houses_list = []
+        house_names = [
+            "first_house", "second_house", "third_house", "fourth_house", 
+            "fifth_house", "sixth_house", "seventh_house", "eighth_house", 
+            "ninth_house", "tenth_house", "eleventh_house", "twelfth_house"
+        ]
+        for i, h_attr in enumerate(house_names):
+            h_obj = getattr(subject, h_attr, None)
+            if h_obj:
+                houses_list.append({
+                    "house": i + 1,
+                    "sign": getattr(h_obj, "sign", ""),
+                    "degree": getattr(h_obj, "position", 0.0),
+                    "abs_pos": getattr(h_obj, "abs_pos", 0.0)
+                })
+
+        # === ПАТЧ: Расселяем по домам те точки, которые мы посчитали вручную ===
+        for p in planets_list:
+            if p.get("house") is None:
+                p["house"] = self._get_house_for_degree(p["abs_pos"], houses_list)
+
+        # Общий массив знаков для точек
+        signs_full = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
+        signs_short = ["Ari", "Tau", "Gem", "Can", "Leo", "Vir", "Lib", "Sco", "Sag", "Cap", "Aqu", "Pis"]
+
+        # 3. Высчитываем Южный Узел (отталкиваясь от найденного Северного)
+        north_node = next((p for p in planets_list if p["name"] in ["True_North_Lunar_Node", "Mean_North_Lunar_Node"]), None)
+        
         if north_node:
             sn_abs_pos = (north_node["abs_pos"] + 180) % 360
             sn_sign_id = int(sn_abs_pos // 30)
-            sn_degree = sn_abs_pos % 30
+            sn_label = "True_South_Lunar_Node" if inp.node_type == "true" else "Mean_South_Lunar_Node"
             
-            # Массив знаков зодиака для определения знака по sign_id
-            signs = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", 
-                     "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
-                     
             planets_list.append({
-                "name": "True_South_Lunar_Node",
-                "sign": signs[sn_sign_id],
+                "name": sn_label,
+                "sign": signs_short[sn_sign_id],
                 "sign_id": sn_sign_id,
-                "degree": sn_degree,
+                "degree": sn_abs_pos % 30,
                 "abs_pos": sn_abs_pos,
-                "house": self._get_house_for_degree(sn_abs_pos, chart_dump.get("houses", [])), # Примерный дом
-                "is_retro": north_node["is_retro"],
-                "speed": north_node["speed"],
-                "is_stationary": north_node["is_stationary"]
+                # Если у вас уже рассчитаны Дома на этом этапе, используем их, иначе None (и он подхватится патчем ниже)
+                "house": self._get_house_for_degree(sn_abs_pos, houses_list) if houses_list else None,
+                "is_retro": north_node.get("is_retro", False),
+                "speed": north_node.get("speed", 0.0),
+                "is_stationary": north_node.get("is_stationary", False)
             })
 
-        # 3. Добавляем Углы карты (ASC, DSC, MC, IC) как "планеты", чтобы они красиво вывелись в таблице
+        # 4. РАССЧИТЫВАЕМ ФИКТИВНЫЕ ТОЧКИ ВРУЧНУЮ
+        try:
+            # Вертекс
+            cusps, ascmc = swe.houses(subject.julian_day, inp.lat, inp.lon, str(inp.house_system).encode('ascii'))
+            vertex_abs = ascmc[3]
+            planets_list.append({
+                "name": "Vertex",
+                "sign": signs_short[int(vertex_abs // 30)],
+                "sign_id": int(vertex_abs // 30),
+                "degree": vertex_abs % 30,
+                "abs_pos": vertex_abs,
+                "house": self._get_house_for_degree(vertex_abs, houses_list), # <-- ТЕПЕРЬ ИЩЕМ В ПРАВИЛЬНОМ МАССИВЕ
+                "is_retro": False,
+                "speed": 0.0,
+                "is_stationary": False
+            })
+
+            # Фортуна
+            asc_obj = getattr(subject, "first_house", None)
+            sun_obj = getattr(subject, "sun", None)
+            moon_obj = getattr(subject, "moon", None)
+            
+            if asc_obj and sun_obj and moon_obj:
+                day_houses = ["Seventh_House", "Eighth_House", "Ninth_House", "Tenth_House", "Eleventh_House", "Twelfth_House"]
+                is_day_chart = getattr(sun_obj, "house", "") in day_houses
+                
+                if is_day_chart:
+                    pf_abs = (asc_obj.abs_pos + moon_obj.abs_pos - sun_obj.abs_pos) % 360
+                else:
+                    pf_abs = (asc_obj.abs_pos + sun_obj.abs_pos - moon_obj.abs_pos) % 360
+                    
+                planets_list.append({
+                    "name": "Fortune",
+                    "sign": signs_short[int(pf_abs // 30)],
+                    "sign_id": int(pf_abs // 30),
+                    "degree": pf_abs % 30,
+                    "abs_pos": pf_abs,
+                    "house": self._get_house_for_degree(pf_abs, houses_list), # <-- ТЕПЕРЬ ИЩЕМ В ПРАВИЛЬНОМ МАССИВЕ
+                    "is_retro": False,
+                    "speed": 0.0,
+                    "is_stationary": False
+                })
+        except Exception as e:
+            print(f"[ENGINE ERROR] Ошибка расчета фиктивных точек: {e}")
+
+        # 5. Добавляем Углы карты (ASC, DSC, MC, IC)
         angles = [
             ("Ascendant", getattr(subject, "first_house", None)),
             ("Descendant", getattr(subject, "seventh_house", None)),
             ("Medium_Coeli", getattr(subject, "tenth_house", None)),
             ("Imum_Coeli", getattr(subject, "fourth_house", None))
         ]
-        
         for ang_name, ang_obj in angles:
             if ang_obj:
                 planets_list.append({
@@ -277,8 +399,8 @@ class KerykeionEngine:
                     "sign_id": getattr(ang_obj, "sign_num", 0),
                     "degree": getattr(ang_obj, "position", 0.0),
                     "abs_pos": getattr(ang_obj, "abs_pos", 0.0),
-                    "house": None, # Углы сами по себе являются началом домов
-                    "is_retro": False, # Углы не бывают ретроградными
+                    "house": None, 
+                    "is_retro": False, 
                     "speed": 0.0,
                     "is_stationary": False
                 })
@@ -299,16 +421,100 @@ class KerykeionEngine:
                     "abs_pos": getattr(h_obj, "abs_pos", 0.0)
                 })
 
+        # --- 6. ПОЛНОСТЬЮ КАСТОМНЫЙ РАСЧЕТ ВСЕХ АСПЕКТОВ (В СТИЛЕ ASTRO-SEEK) ---
         clean_aspects = []
-        for a in chart_dump.get("aspects", []):
-            clean_aspects.append({
-                "p1": a.get("p1_name"),
-                "p2": a.get("p2_name"),
-                "type": a.get("aspect"),
-                "orb": round(a.get("orbit", 0), 4),
-                "is_applying": a.get("aspect_movement") == "Applying",
-            })
+        
+        # Правила: Угол -> (Название, Орбис_для_Планет, Орбис_для_Фиктивных)
+        aspect_rules = {
+            # Мажорные
+            0:   ("conjunction", 8.0, 2.5),
+            60:  ("sextile", 6.0, 2.0),
+            90:  ("square", 8.0, 2.5),
+            120: ("trine", 8.0, 2.5),
+            180: ("opposition", 8.0, 2.5),
+            # Минорные и творческие
+            30:  ("semisextile", 1.5, 1.0),
+            45:  ("semisquare", 1.5, 1.0),
+            72:  ("quintile", 1.5, 1.0),
+            135: ("sesquiquadrate", 1.5, 1.0),
+            144: ("biquintile", 1.5, 1.0),
+            150: ("quincunx", 2.0, 1.5)
+        }
 
+        # Фиктивные точки и углы (к ним орбис всегда строгий, иначе карта превратится в кашу)
+        strict_points = ["True_North_Lunar_Node", "True_South_Lunar_Node", "Mean_Lilith", "Fortune", "Vertex", "Ascendant", "Descendant", "Medium_Coeli", "Imum_Coeli"]
+
+        # Словарь для запроса Склонений (Declination) из швейцарских эфемерид
+        swisseph_ids = {
+            "Sun": swe.SUN, "Moon": swe.MOON, "Mercury": swe.MERCURY, "Venus": swe.VENUS,
+            "Mars": swe.MARS, "Jupiter": swe.JUPITER, "Saturn": swe.SATURN, "Uranus": swe.URANUS,
+            "Neptune": swe.NEPTUNE, "Pluto": swe.PLUTO, "Chiron": swe.CHIRON,
+            "True_North_Lunar_Node": swe.TRUE_NODE, "Mean_Lilith": swe.MEAN_APOG
+        }
+
+        def get_declination(p_name, jd):
+            if p_name in swisseph_ids:
+                try:
+                    # FLG_EQUATORIAL отдаст нам экваториальные координаты (включая Склонение)
+                    res, _ = swe.calc_ut(jd, swisseph_ids[p_name], swe.FLG_EQUATORIAL)
+                    return res[1]  # Индекс 1 — это склонение
+                except Exception:
+                    return None
+            return None
+
+        # Перебираем каждую уникальную пару планет/точек
+        for i in range(len(planets_list)):
+            for j in range(i + 1, len(planets_list)):
+                p1 = planets_list[i]
+                p2 = planets_list[j]
+                
+                # Игнорируем очевидные оппозиции (Узлы между собой, ASC-DSC, MC-IC)
+                if p1["name"] == "True_North_Lunar_Node" and p2["name"] == "True_South_Lunar_Node": continue
+                if p1["name"] == "Ascendant" and p2["name"] == "Descendant": continue
+                if p1["name"] == "Medium_Coeli" and p2["name"] == "Imum_Coeli": continue
+                
+                is_strict = (p1["name"] in strict_points) and (p2["name"] in strict_points)
+                
+                # === РАСЧЕТ АСПЕКТОВ ПО ДОЛГОТЕ (Обычные) ===
+                diff = abs(p1["abs_pos"] - p2["abs_pos"])
+                if diff > 180:
+                    diff = 360 - diff
+                    
+                for angle, (asp_name, orb_normal, orb_strict) in aspect_rules.items():
+                    max_orb = orb_strict if is_strict else orb_normal
+                    orb = abs(diff - angle)
+                    if orb <= max_orb:
+                        clean_aspects.append({
+                            "p1": p1["name"],
+                            "p2": p2["name"],
+                            "type": asp_name,
+                            "orb": round(orb, 4),
+                            # Сходимость (Applying) можно высчитать по скорости, но пока ставим False 
+                            # (если скорости направлены друг к другу)
+                            "is_applying": False 
+                        })
+                
+                # === РАСЧЕТ АСПЕКТОВ ПО СКЛОНЕНИЮ (Параллели) ===
+                # Параллели обычно смотрят только для реальных планет (не для углов/фиктивных точек)
+                if not is_strict:
+                    decl1 = get_declination(p1["name"], subject.julian_day)
+                    decl2 = get_declination(p2["name"], subject.julian_day)
+                    
+                    if decl1 is not None and decl2 is not None:
+                        # Расстояние по модулю склонения
+                        diff_decl = abs(abs(decl1) - abs(decl2))
+                        
+                        # Орбис для параллелей очень жесткий: максимум 1.2 градуса
+                        if diff_decl <= 1.2: 
+                            is_same_sign = (decl1 * decl2) > 0 # Если знаки одинаковые (оба +, или оба -)
+                            asp_type = "parallel" if is_same_sign else "contraparallel"
+                            clean_aspects.append({
+                                "p1": p1["name"],
+                                "p2": p2["name"],
+                                "type": asp_type,
+                                "orb": round(diff_decl, 4),
+                                "is_applying": False
+                            })
         return {
             "meta": {
                 "engine": "kerykeion_v5",

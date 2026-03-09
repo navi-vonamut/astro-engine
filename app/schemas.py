@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -10,7 +10,9 @@ class NatalChartRequest(BaseModel):
     tz: str = Field(..., description="Timezone like +03:00 or Europe/Warsaw")
     lat: float
     lon: float
-    name: str = "User"
+    name: Optional[str] = "User"
+    house_system: Optional[str] = "P"
+    node_type: Optional[str] = "true"
 
 
 class DailyPredictionRequest(BaseModel):
