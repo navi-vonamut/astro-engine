@@ -1,191 +1,99 @@
 import swisseph as swe
 import math
-import pytz
 import numpy as np
-import time
-from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 
-try:
-    from .kerykeion_engine import BirthInput
-except ImportError:
-    pass
-
-def measure_time(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        end = time.time()
-        return result
-    return wrapper
+from app.engine.core.models import BirthInput
+from kerykeion import AstrologicalSubjectFactory
+from app.engine.core.utils import measure_time, get_utc_jd_from_input, tz_to_pytz, parse_ymd, parse_hm
+from app.engine.core.constants import SWISSEPH_OBJECTS
+from app.engine.core.geo_math import (
+    to_dms, normalize_lon, generate_geodesic_path, 
+    calculate_bearing, interpolate_dateline
+)
 
 class GeoAstroEngine:
-    def __init__(self):
-        self.PLANETS = {
-            'Sun': swe.SUN, 'Moon': swe.MOON, 'Mercury': swe.MERCURY,
-            'Venus': swe.VENUS, 'Mars': swe.MARS, 'Jupiter': swe.JUPITER,
-            'Saturn': swe.SATURN, 'Uranus': swe.URANUS, 'Neptune': swe.NEPTUNE,
-            'Pluto': swe.PLUTO,
-            'Chiron': swe.CHIRON,
-            'Lilith': swe.MEAN_APOG,
-            'Node': swe.TRUE_NODE
-        }
-
-    # === НОВЫЙ ХЕЛПЕР: ПЕРЕВОД В ГРАДУСЫ-МИНУТЫ-СЕКУНДЫ ===
-    def to_dms(self, deg):
-        d = int(deg)
-        m = int((deg - d) * 60)
-        s = int(((deg - d) * 60 - m) * 60)
-        return f"{d}°{m:02d}'{s:02d}\""
-
-    def _normalize_lon(self, lon: float) -> float:
-        lon = lon % 360
-        if lon > 180:
-            lon -= 360
-        return round(lon, 5) # Увеличил точность до 5
-
-    def _get_utc_jd(self, inp: BirthInput) -> float:
-        """Расчет JD с учетом таймзоны."""
-        try:
-            date_str = inp.date.replace('/', '-')
-            if '-' in date_str:
-                parts = date_str.split('-')
-                y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
-            else:
-                dt_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                y, m, d = dt_obj.year, dt_obj.month, dt_obj.day
-        except:
-             dt_obj = datetime.strptime(inp.date, "%Y-%m-%d")
-             y, m, d = dt_obj.year, dt_obj.month, dt_obj.day
-
-        try:
-            t_parts = inp.time.split(':')
-            h = int(t_parts[0])
-            mn = int(t_parts[1])
-            s = float(t_parts[2]) if len(t_parts) > 2 else 0.0
-        except:
-            h, mn, s = 12, 0, 0
-
-        offset_hours = 0.0
-        tz_str = inp.tz
-        try:
-            if tz_str:
-                tz = pytz.timezone(tz_str)
-                dt_local = datetime(y, m, d, h, mn, int(s))
-                dt_aware = tz.localize(dt_local)
-                offset_duration = dt_aware.utcoffset()
-                offset_hours = offset_duration.total_seconds() / 3600.0
-        except Exception as e:
-            print(f"⚠️ Timezone Error ({tz_str}): {e}. Using UTC.")
-            offset_hours = 0.0
-
-        hour_decimal_local = h + (mn / 60.0) + (s / 3600.0)
-        hour_decimal_utc = hour_decimal_local - offset_hours
-        
-        jd = swe.julday(y, m, d, hour_decimal_utc)
-        return jd
-
-    def _destination_point(self, lat, lon, bearing, distance_km):
-        R = 6371.0 
-        lat1 = math.radians(lat)
-        lon1 = math.radians(lon)
-        brng = math.radians(bearing)
-        lat2 = math.asin(math.sin(lat1)*math.cos(distance_km/R) +
-                         math.cos(lat1)*math.sin(distance_km/R)*math.cos(brng))
-        lon2 = lon1 + math.atan2(math.sin(brng)*math.sin(distance_km/R)*math.cos(lat1),
-                                 math.cos(distance_km/R)-math.sin(lat1)*math.sin(lat2))
-        return [math.degrees(lat2), self._normalize_lon(math.degrees(lon2))]
-
-    def _generate_geodesic_path(self, start_lat, start_lon, azimuth, max_dist_km=20000):
-        points = []
-        segment = []
-        segment.append([float(start_lat), float(start_lon)]) 
-        prev_lon = float(start_lon)
-        for dist in range(200, max_dist_km, 200):
-            pt = self._destination_point(float(start_lat), float(start_lon), azimuth, dist)
-            if abs(pt[1] - prev_lon) > 180:
-                points.append(segment)
-                segment = []
-            segment.append(pt)
-            prev_lon = pt[1]
-        points.append(segment)
-        return points
-
-    def _calculate_bearing(self, lat1, lon1, lat2, lon2):
-        dLon = math.radians(lon2 - lon1)
-        lat1 = math.radians(lat1)
-        lat2 = math.radians(lat2)
-        y = math.sin(dLon) * math.cos(lat2)
-        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon)
-        brng = math.atan2(y, x)
-        return (math.degrees(brng) + 360) % 360
-
-    def _interpolate_dateline(self, prev_lat, prev_lon, curr_lat, curr_lon):
-        if prev_lon > 0 and curr_lon < 0:
-            edge_lon = 180.0; next_start_lon = -180.0
-        elif prev_lon < 0 and curr_lon > 0:
-            edge_lon = -180.0; next_start_lon = 180.0
-        else: return None, None
-        dist_to_edge = abs(edge_lon - prev_lon)
-        dist_total = abs(360 - abs(prev_lon - curr_lon))
-        fraction = 0.5 if dist_total < 0.0001 else dist_to_edge / dist_total
-        mid_lat = prev_lat + (curr_lat - prev_lat) * fraction
-        return [mid_lat, edge_lon], [mid_lat, next_start_lon]
 
     # ==========================================
     # 1. АСТРОКАРТОГРАФИЯ (ACG)
     # ==========================================
     @measure_time
     def get_astrocartography_lines(self, inp: BirthInput) -> Dict[str, Any]:
-        # (Код ACG оставляем без изменений для краткости - он работает)
         result = {}
-        jd = self._get_utc_jd(inp)
+        jd = get_utc_jd_from_input(inp)
         gst_deg = swe.sidtime(jd) * 15.0
         MAX_MERCATOR_LAT = 85.0
         base_lats = np.arange(-MAX_MERCATOR_LAT, MAX_MERCATOR_LAT + 1, 1.0).tolist()
-        for p_name, p_id in self.PLANETS.items():
+        
+        for p_name, p_id in SWISSEPH_OBJECTS.items():
             try:
                 res, _ = swe.calc_ut(jd, p_id, swe.FLG_SWIEPH | swe.FLG_EQUATORIAL)
             except Exception: continue
             ra, decl = res[0], res[1]
             lines = {"MC": [], "IC": [], "ASC": [], "DSC": [], "Zenith": []}
-            lon_mc = self._normalize_lon(ra - gst_deg); lon_ic = self._normalize_lon(ra - gst_deg + 180.0)
+            
+            lon_mc = normalize_lon(ra - gst_deg)
+            lon_ic = normalize_lon(ra - gst_deg + 180.0)
             mc_pts, ic_pts = [], []
             for lat in range(int(-MAX_MERCATOR_LAT), int(MAX_MERCATOR_LAT) + 1, 5): 
-                mc_pts.append([float(lat), round(lon_mc, 3)]); ic_pts.append([float(lat), round(lon_ic, 3)])
+                mc_pts.append([float(lat), round(lon_mc, 3)])
+                ic_pts.append([float(lat), round(lon_ic, 3)])
+            
             lines["MC"] = [mc_pts]; lines["IC"] = [ic_pts]; lines["Zenith"] = [round(decl, 3), round(lon_mc, 3)]
-            asc_segments, dsc_segments = [], []; curr_asc, curr_dsc = [], []; prev_asc, prev_dsc = None, None
-            limit_real = 90.0 - abs(decl); limit_map = min(limit_real, MAX_MERCATOR_LAT)
+            
+            asc_segments, dsc_segments = [], []
+            curr_asc, curr_dsc = [], []
+            prev_asc, prev_dsc = None, None
+            
+            limit_real = 90.0 - abs(decl)
+            limit_map = min(limit_real, MAX_MERCATOR_LAT)
             lats = [lat for lat in base_lats if abs(lat) < (limit_map - 2.0)]
+            
             if limit_real < MAX_MERCATOR_LAT:
                 steps = [2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.01]
                 for s in steps:
                     if (limit_map - s) > lats[-1]: lats.extend([limit_map - s, -limit_map + s])
                 lats.extend([limit_map, -limit_map])
-            else: lats.extend([MAX_MERCATOR_LAT, -MAX_MERCATOR_LAT])
-            lats = sorted(list(set(lats))); decl_rad = math.radians(decl); tan_decl = math.tan(decl_rad)
+            else: 
+                lats.extend([MAX_MERCATOR_LAT, -MAX_MERCATOR_LAT])
+                
+            lats = sorted(list(set(lats)))
+            decl_rad = math.radians(decl)
+            tan_decl = math.tan(decl_rad)
+            
             for lat in lats:
-                try: tan_lat = math.tan(math.radians(lat)); cos_h = -tan_lat * tan_decl
+                try: 
+                    tan_lat = math.tan(math.radians(lat))
+                    cos_h = -tan_lat * tan_decl
                 except: continue
+                
                 if cos_h > 1.0: cos_h = 1.0
                 elif cos_h < -1.0: cos_h = -1.0
+                
                 h_deg = math.degrees(math.acos(cos_h))
-                lon_asc = self._normalize_lon((ra - h_deg) - gst_deg)
+                
+                # Линия ASC
+                lon_asc = normalize_lon((ra - h_deg) - gst_deg)
                 if prev_asc is not None:
                     p_lat, p_lon = prev_asc; diff = lon_asc - p_lon
                     if abs(diff) > 180:
-                        pt_end, pt_start = self._interpolate_dateline(p_lat, p_lon, lat, lon_asc)
+                        pt_end, pt_start = interpolate_dateline(p_lat, p_lon, lat, lon_asc)
                         if pt_end: curr_asc.append(pt_end); asc_segments.append(curr_asc); curr_asc = [pt_start]
-                    elif abs(lat) >= (MAX_MERCATOR_LAT - 0.1) and abs(diff) > 20: asc_segments.append(curr_asc); curr_asc = []
+                    elif abs(lat) >= (MAX_MERCATOR_LAT - 0.1) and abs(diff) > 20: 
+                        asc_segments.append(curr_asc); curr_asc = []
                 curr_asc.append([lat, round(lon_asc, 3)]); prev_asc = (lat, lon_asc)
-                lon_dsc = self._normalize_lon((ra + h_deg) - gst_deg)
+                
+                # Линия DSC
+                lon_dsc = normalize_lon((ra + h_deg) - gst_deg)
                 if prev_dsc is not None:
                     p_lat, p_lon = prev_dsc; diff = lon_dsc - p_lon
                     if abs(diff) > 180:
-                        pt_end, pt_start = self._interpolate_dateline(p_lat, p_lon, lat, lon_dsc)
+                        pt_end, pt_start = interpolate_dateline(p_lat, p_lon, lat, lon_dsc)
                         if pt_end: curr_dsc.append(pt_end); dsc_segments.append(curr_dsc); curr_dsc = [pt_start]
-                    elif abs(lat) >= (MAX_MERCATOR_LAT - 0.1) and abs(diff) > 20: dsc_segments.append(curr_dsc); curr_dsc = []
+                    elif abs(lat) >= (MAX_MERCATOR_LAT - 0.1) and abs(diff) > 20: 
+                        dsc_segments.append(curr_dsc); curr_dsc = []
                 curr_dsc.append([lat, round(lon_dsc, 3)]); prev_dsc = (lat, lon_dsc)
+                
             if curr_asc: asc_segments.append(curr_asc)
             if curr_dsc: dsc_segments.append(curr_dsc)
             lines["ASC"] = asc_segments; lines["DSC"] = dsc_segments
@@ -193,49 +101,39 @@ class GeoAstroEngine:
         return result
 
     # ==========================================
-    # 2. LOCAL SPACE (ВЫСОКАЯ ТОЧНОСТЬ + ЛОГИ)
+    # 2. LOCAL SPACE
     # ==========================================
     @measure_time
     def get_local_space_lines(self, inp: BirthInput) -> Dict[str, Any]:
-        jd = self._get_utc_jd(inp)
+        jd = get_utc_jd_from_input(inp)
         swe.set_topo(float(inp.lon), float(inp.lat), 0.0)
         observer_coords = (float(inp.lon), float(inp.lat), 0.0)
         
         lines = {}
 
-        # --- A) УГЛЫ (ASC, MC) ---
+        # Углы
         try:
             cusps, ascmc = swe.houses(jd, float(inp.lat), float(inp.lon), b'P')
-            asc_deg = ascmc[0]
-            mc_deg = ascmc[1]
+            asc_deg, mc_deg = ascmc[0], ascmc[1]
             ecl_res = swe.calc_ut(jd, swe.ECL_NUT, 0)
             true_obliquity = ecl_res[0][1]
 
-            angles_map = {'Ascendant': asc_deg, 'MC': mc_deg}
+            angles_map = {'Ascendant': asc_deg, 'Medium_Coeli': mc_deg}
             for name, lon_deg in angles_map.items():
                 t_res = swe.cotrans((lon_deg, 0.0, 1.0), -true_obliquity)
                 ra, dec = t_res[0], t_res[1]
-                point_coords = (ra, dec, 1.0)
                 
-                # Без рефракции
-                res_az = swe.azalt(jd, swe.EQU2HOR, observer_coords, 0.0, 0.0, point_coords)
+                res_az = swe.azalt(jd, swe.EQU2HOR, observer_coords, 0.0, 0.0, (ra, dec, 1.0))
                 az_north = (res_az[0] + 180.0) % 360.0
 
-                print(f"📐 {name}: {az_north:.4f}° -> {self.to_dms(az_north)}")
+                forward = generate_geodesic_path(inp.lat, inp.lon, az_north, 20000)
+                reverse = generate_geodesic_path(inp.lat, inp.lon, (az_north + 180) % 360, 20000)
 
-                forward = self._generate_geodesic_path(inp.lat, inp.lon, az_north, 20000)
-                reverse = self._generate_geodesic_path(inp.lat, inp.lon, (az_north + 180) % 360, 20000)
+                lines[name] = {"azimuth": round(az_north, 4), "forward_paths": forward, "reverse_paths": reverse}
+        except Exception as e: print(f"❌ Error Angles: {e}")
 
-                lines[name] = {
-                    "azimuth": round(az_north, 4), # 4 знака точности
-                    "forward_paths": forward,
-                    "reverse_paths": reverse 
-                }
-        except Exception as e:
-            print(f"❌ Error Angles: {e}")
-
-        # --- B) ПЛАНЕТЫ ---
-        for p_name, p_id in self.PLANETS.items():
+        # Планеты
+        for p_name, p_id in SWISSEPH_OBJECTS.items():
             try:
                 flags = swe.FLG_SWIEPH | swe.FLG_TOPOCTR | swe.FLG_EQUATORIAL
                 res_pos = swe.calc_ut(jd, p_id, flags)
@@ -243,26 +141,18 @@ class GeoAstroEngine:
                 
                 res_az = swe.azalt(jd, swe.EQU2HOR, observer_coords, 0.0, 0.0, planet_coords)
                 az_north = (res_az[0] + 180.0) % 360.0
-                
-                # Логируем, чтобы вы могли сверить с Astro.com
-                # print(f"🪐 {p_name}: {az_north:.4f}° -> {self.to_dms(az_north)}")
 
-            except Exception as e:
-                continue
+            except Exception as e: continue
 
-            forward = self._generate_geodesic_path(inp.lat, inp.lon, az_north, 20000)
-            reverse = self._generate_geodesic_path(inp.lat, inp.lon, (az_north + 180) % 360, 20000)
+            forward = generate_geodesic_path(inp.lat, inp.lon, az_north, 20000)
+            reverse = generate_geodesic_path(inp.lat, inp.lon, (az_north + 180) % 360, 20000)
 
-            lines[p_name] = {
-                "azimuth": round(az_north, 4), # 4 знака точности
-                "forward_paths": forward,
-                "reverse_paths": reverse
-            }
+            lines[p_name] = {"azimuth": round(az_north, 4), "forward_paths": forward, "reverse_paths": reverse}
 
         return lines
 
     # ==========================================
-    # 3. COMBINED SCORING (Оставляем как есть)
+    # 3. COMBINED SCORING 
     # ==========================================
     @measure_time
     def calculate_city_scores_combined(self, acg_data, ls_data, cities, birth_lat, birth_lon):
@@ -309,16 +199,25 @@ class GeoAstroEngine:
         final_cities = []
         for i, city in enumerate(cities):
             current_aspects = acg_results.get(i, [])
-            bearing_to_city = self._calculate_bearing(birth_lat, birth_lon, city['lat'], city['lon'])
+            bearing_to_city = calculate_bearing(birth_lat, birth_lon, city['lat'], city['lon'])
             ls_aspects = []
             if ls_data:
                 for planet, p_data in ls_data.items():
                     planet_az = p_data['azimuth']
-                    diff = abs(bearing_to_city - planet_az)
-                    if diff > 180: diff = 360 - diff
-                    if diff <= LS_ORB_DEGREES:
-                        score = 50 * (1 - diff/LS_ORB_DEGREES)
+                    
+                    diff_fwd = abs(bearing_to_city - planet_az)
+                    if diff_fwd > 180: diff_fwd = 360 - diff_fwd
+                    
+                    planet_az_rev = (planet_az + 180.0) % 360.0
+                    diff_rev = abs(bearing_to_city - planet_az_rev)
+                    if diff_rev > 180: diff_rev = 360 - diff_rev
+
+                    if diff_fwd <= LS_ORB_DEGREES:
+                        score = 50 * (1 - diff_fwd/LS_ORB_DEGREES)
                         ls_aspects.append({"planet": planet, "angle": "Local Space", "distance_km": 0, "score": int(score), "type": "ls"})
+                    elif diff_rev <= LS_ORB_DEGREES:
+                        score = 50 * (1 - diff_rev/LS_ORB_DEGREES)
+                        ls_aspects.append({"planet": planet, "angle": "Local Space (Оппозиция)", "distance_km": 0, "score": int(score), "type": "ls"})
             
             has_acg = len(current_aspects) > 0; has_ls = len(ls_aspects) > 0; is_crossing = has_acg and has_ls
             all_aspects = current_aspects + ls_aspects
@@ -330,12 +229,12 @@ class GeoAstroEngine:
         return final_cities
 
     def get_relocation_raw_data(self, inp: BirthInput, target_lat: float, target_lon: float, city_name: str) -> Dict[str, Any]:
-        jd = self._get_utc_jd(inp)
+        jd = get_utc_jd_from_input(inp)
         try: cusps, ascmc = swe.houses_ex(jd, target_lat, target_lon, b'P')
         except: cusps, ascmc = swe.houses_ex(jd, target_lat, target_lon, b'W')
         houses = cusps[1:]
         planets_data = {}
-        for p_name, p_id in self.PLANETS.items():
+        for p_name, p_id in SWISSEPH_OBJECTS.items():
             try:
                 res, _ = swe.calc_ut(jd, p_id, swe.FLG_SWIEPH)
                 pl_lon = res[0]
@@ -355,4 +254,140 @@ class GeoAstroEngine:
             "angles": {"Ascendant": round(ascmc[0], 4), "MC": round(ascmc[1], 4)},
             "cusps": [round(h, 4) for h in houses],
             "planets_in_houses": planets_data
+        }
+
+    @measure_time
+    def check_single_point(self, inp: BirthInput, target_lat: float, target_lon: float, target_name: str = "Target") -> Dict[str, Any]:
+        acg_data = self.get_astrocartography_lines(inp)
+        ls_data = self.get_local_space_lines(inp)
+        
+        single_city = [{"name": target_name, "lat": target_lat, "lon": target_lon, "country": "Custom Point"}]
+        
+        results = self.calculate_city_scores_combined(acg_data, ls_data, single_city, float(inp.lat), float(inp.lon))
+        if results and len(results) > 0:
+            return results[0]
+        
+        return {"name": target_name, "lat": target_lat, "lon": target_lon, "aspects": [], "is_crossing": False}
+
+    @measure_time
+    def check_local_space_point(self, inp: BirthInput, target_lat: float, target_lon: float, target_name: str = "Target") -> Dict[str, Any]:
+        bearing_to_target = calculate_bearing(float(inp.lat), float(inp.lon), target_lat, target_lon)
+        ls_data = self.get_local_space_lines(inp)
+        LS_ORB_DEGREES = 3.0 
+        aspects = []
+        
+        for planet, p_data in ls_data.items():
+            planet_az = p_data['azimuth']
+            
+            diff_fwd = abs(bearing_to_target - planet_az)
+            if diff_fwd > 180: diff_fwd = 360 - diff_fwd
+            
+            planet_az_rev = (planet_az + 180.0) % 360.0
+            diff_rev = abs(bearing_to_target - planet_az_rev)
+            if diff_rev > 180: diff_rev = 360 - diff_rev
+
+            if diff_fwd <= LS_ORB_DEGREES:
+                score = int(100 * (1 - diff_fwd/LS_ORB_DEGREES))
+                aspects.append({"planet": planet, "type": "ls", "angle": "Local Space", "azimuth": round(planet_az, 2), "score": score})
+            elif diff_rev <= LS_ORB_DEGREES:
+                score = int(100 * (1 - diff_rev/LS_ORB_DEGREES))
+                aspects.append({"planet": planet, "type": "ls", "angle": "Local Space (Оппозиция)", "azimuth": round(planet_az_rev, 2), "score": score})
+                
+        aspects.sort(key=lambda x: x['score'], reverse=True)
+        return {
+            "name": target_name, "center_lat": float(inp.lat), "center_lon": float(inp.lon),
+            "lat": target_lat, "lon": target_lon, "bearing": round(bearing_to_target, 2),
+            "aspects": aspects, "is_crossing": len(aspects) > 0
+        }
+    
+    def get_local_space_chart(self, inp) -> Dict[str, Any]:
+        """
+        Рассчитывает круговую карту Local Space: 
+        Азимуты (для радиальных линий), Высоту (над/под горизонтом) и аспекты.
+        """
+        # 1. Получаем Юлианский день (через Kerykeion для надежности)
+        y, m, d = parse_ymd(inp.date)
+        hh, mm = parse_hm(inp.time)
+        subject = AstrologicalSubjectFactory.from_birth_data(
+            name=inp.name, year=y, month=m, day=d, hour=hh, minute=mm,
+            lng=float(inp.lon), lat=float(inp.lat), tz_str=tz_to_pytz(str(inp.tz))
+        )
+        jd = subject.julian_day
+        
+        # 2. Координаты наблюдателя (Долгота, Широта, Высота над морем = 0)
+        geopos = (float(inp.lon), float(inp.lat), 0.0)
+        
+        ls_planets = []
+        # Берем классические планеты + Хирон, Узлы и Лилит
+        target_points = [
+            "Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", 
+            "Saturn", "Uranus", "Neptune", "Pluto", "Chiron", 
+            "True_North_Lunar_Node", "Mean_Lilith"
+        ]
+        
+        for p_name in target_points:
+            swe_id = SWISSEPH_OBJECTS.get(p_name)
+            if swe_id is None: continue
+                
+            # Получаем стандартные эклиптические координаты
+            res_ecl, _ = swe.calc_ut(jd, swe_id, swe.FLG_SWIEPH)
+            pos = (res_ecl[0], res_ecl[1], res_ecl[2]) # lon, lat, dist
+            
+            # Переводим эклиптику в горизонтальную систему координат
+            # Флаг 0 означает входные данные из эклиптики
+            azalt = swe.azalt(jd, 0, geopos, 0, 0, pos)
+            
+            # В SwissEph азимут по умолчанию считается от Юга (0°) к Западу (90°).
+            # Переводим в классический компас: Север (0°), Восток (90°):
+            raw_azimuth = azalt[0]
+            compass_azimuth = (raw_azimuth + 180) % 360
+            
+            true_altitude = azalt[1]
+            
+            ls_planets.append({
+                "name": p_name,
+                "azimuth": round(compass_azimuth, 4),
+                "altitude": round(true_altitude, 4),
+                "is_above_horizon": true_altitude > 0
+            })
+            
+        # 3. Считаем аспекты Local Space
+        # Для LS используются строгие орбисы, так как энергия очень осязаема
+        ls_aspect_rules = {
+            0:   ("conjunction", 3.0),
+            60:  ("sextile", 2.0),
+            90:  ("square", 2.5),
+            120: ("trine", 2.0),
+            180: ("opposition", 3.0)
+        }
+        
+        aspects = []
+        for i in range(len(ls_planets)):
+            for j in range(i + 1, len(ls_planets)):
+                p1 = ls_planets[i]
+                p2 = ls_planets[j]
+                
+                # Ищем кратчайшее расстояние по кругу
+                diff = abs(p1["azimuth"] - p2["azimuth"])
+                if diff > 180:
+                    diff = 360 - diff
+                    
+                for angle, (asp_name, max_orb) in ls_aspect_rules.items():
+                    orb = abs(diff - angle)
+                    if orb <= max_orb:
+                        aspects.append({
+                            "p1": p1["name"],
+                            "p2": p2["name"],
+                            "type": asp_name,
+                            "orb": round(orb, 4)
+                        })
+                        
+        return {
+            "meta": {
+                "type": "local_space_chart",
+                "lat": inp.lat,
+                "lon": inp.lon
+            },
+            "planets": ls_planets,
+            "aspects": aspects
         }

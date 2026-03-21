@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from ..deps import verify_internal_api_key
-from ..schemas import SynastryRequest
-from ..engine.kerykeion_engine import KerykeionEngine, BirthInput
+
+from app.deps import verify_internal_api_key
+from app.schemas import SynastryRequest
+from app.engine.kerykeion_engine import KerykeionEngine
+from app.engine.core.models import BirthInput
 
 router = APIRouter(tags=["synastry"])
 

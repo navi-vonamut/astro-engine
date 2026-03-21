@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
-# Импорты из вашей структуры
-from ..deps import verify_internal_api_key
-from ..schemas import HoraryRequest 
-from ..engine.kerykeion_engine import KerykeionEngine, BirthInput
+from app.deps import verify_internal_api_key
+from app.schemas import HoraryRequest 
+from app.engine.kerykeion_engine import KerykeionEngine
+from app.engine.core.models import BirthInput
 
 router = APIRouter(tags=["horary"])
 

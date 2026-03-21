@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from ..deps import verify_internal_api_key
-from ..schemas import SolarReturnRequest
-from ..engine.kerykeion_engine import KerykeionEngine, BirthInput
+
+from app.deps import verify_internal_api_key
+from app.schemas import SolarReturnRequest
+from app.engine.kerykeion_engine import KerykeionEngine
+from app.engine.core.models import BirthInput
 
 router = APIRouter(tags=["solar"])
 

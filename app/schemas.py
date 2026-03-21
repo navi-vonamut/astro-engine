@@ -53,3 +53,16 @@ class SolarReturnRequest(BaseModel):
     return_lat: float | None = Field(None, description="Широта места пребывания (Н.Новгород)")
     return_lon: float | None = Field(None, description="Долгота места пребывания (Н.Новгород)")
     return_tz: str | None = Field(None, description="Часовой пояс места пребывания")
+
+class RelocationRequest(NatalChartRequest):
+    target_lat: float
+    target_lon: float
+    city_name: str
+
+class BulkRelocationRequest(NatalChartRequest):
+    coordinates: List[dict] # Ожидаем [{"lat": x, "lon": y}, ...]
+
+class CheckPointRequest(NatalChartRequest):
+    target_lat: float
+    target_lon: float
+    target_name: str
