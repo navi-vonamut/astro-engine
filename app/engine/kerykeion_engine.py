@@ -104,6 +104,24 @@ class KerykeionEngine:
         if diff > 180: diff = 360 - diff
         return diff < 8.5
 
+    def _get_aspect_state(self, t_pos: float, t_speed: float, n_pos: float, aspect_angle: float) -> str:
+        def get_orb(p1, p2):
+            diff = abs(p1 - p2)
+            if diff > 180: diff = 360 - diff
+            return abs(diff - aspect_angle)
+
+        current_orb = get_orb(t_pos, n_pos)
+        
+        # Сдвигаем транзитную планету вперед на 0.1 дня (учитывая ее реальную скорость)
+        next_pos = (t_pos + (t_speed * 0.1)) % 360
+        next_orb = get_orb(next_pos, n_pos)
+
+        if current_orb < 0.1: 
+            return "exact" # Экзакт (Точный)
+        if next_orb < current_orb: 
+            return "retrograde_applying" if t_speed < 0 else "applying" # Сходится
+        return "retrograde_separating" if t_speed < 0 else "separating" # Расходится
+
     # === ГЛАВНЫЙ МЕТОД СОЛЯРА ===
     def solar_return(self, natal_inp: BirthInput, year: int, loc_lat: float, loc_lon: float, loc_tz: str) -> Dict[str, Any]:
         print(f"\n[ENGINE] Соляр для {natal_inp.name}. Год: {year}. Локация: {loc_lat}, {loc_lon}")
@@ -285,7 +303,9 @@ class KerykeionEngine:
         print(f"\n[ENGINE START] Transits for {natal_inp.name} on target date {transit_date}")
         natal_data = self.natal(natal_inp)
         natal_houses = natal_data["houses"]
+        natal_planets = {p["name"]: p for p in natal_data["planets"]}
         
+        # Транзитная карта строится на 12:00 (этого достаточно для захвата всех аспектов дня)
         y, m, d = parse_ymd(transit_date)
         transit_inp = BirthInput(
             name="Transit", date=f"{y:04d}-{m:02d}-{d:02d}", time="12:00:00",
@@ -293,6 +313,8 @@ class KerykeionEngine:
         )
         
         transit_chart = self.natal(transit_inp)
+        transit_planets = {p["name"]: p for p in transit_chart["planets"]}
+        
         transit_planets_enriched = []
         for p in transit_chart["planets"]:
             in_house = get_house_for_degree(p["abs_pos"], natal_houses)
@@ -302,22 +324,113 @@ class KerykeionEngine:
 
         s_transit = self.build_subject(transit_inp)
         s_natal = self.build_subject(natal_inp)
-        aspects = get_synastry_aspects(s_transit, s_natal)
+        raw_aspects = get_synastry_aspects(s_transit, s_natal)
         
-        transit_aspects = []
-        for a in aspects:
-            transit_aspects.append({
-                "transit_planet": a["person1_object"],
-                "aspect": a["aspect"],
-                "natal_planet": a["person2_object"],
-                "orb": a["orb"],
+        # 🔥 СЛОВАРИ ДЛЯ МАТЕМАТИКИ И КАТЕГОРИЙ
+        ASPECT_ANGLES = {"Conjunction": 0, "Sextile": 60, "Square": 90, "Trine": 120, "Opposition": 180}
+        CATEGORIES = {
+            "daily": ["Moon"],
+            "short_term": ["Sun", "Mercury", "Venus", "Mars"],
+            "long_term": ["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"],
+            "points": ["True_North_Lunar_Node", "Mean_North_Lunar_Node", "True_South_Lunar_Node", "Mean_South_Lunar_Node", "Lilith", "Mean_Lilith", "Chiron", "Ceres", "Pallas", "Juno", "Vesta", "Vertex", "Fortune"]
+        }
+
+        # 🔥 Добавили 'points'
+        transits_categorized = {"daily": [], "short_term": [], "long_term": [], "points": []}
+
+        for a in raw_aspects:
+            t_name = a["person1_object"]
+            n_name = a["person2_object"]
+            aspect_name = a["aspect"]
+            orb = a["orb"]
+
+            # Определяем категорию (По умолчанию кидаем в точки, если вдруг прилетело что-то неизвестное)
+            cat = "points"
+            if t_name in CATEGORIES["daily"]: cat = "daily"
+            elif t_name in CATEGORIES["short_term"]: cat = "short_term"
+            elif t_name in CATEGORIES["long_term"]: cat = "long_term"
+
+            # Определяем состояние (Сходится/Расходится)
+            state = "unknown"
+            t_p = transit_planets.get(t_name)
+            n_p = natal_planets.get(n_name)
+            
+            if t_p and n_p and aspect_name in ASPECT_ANGLES:
+                state = self._get_aspect_state(
+                    t_pos=t_p["abs_pos"], 
+                    t_speed=t_p["speed"], 
+                    n_pos=n_p["abs_pos"], 
+                    aspect_angle=ASPECT_ANGLES[aspect_name]
+                )
+
+            transits_categorized[cat].append({
+                "transit_planet": t_name,
+                "natal_planet": n_name,
+                "aspect": aspect_name,
+                "orb": orb,
+                "state": state
             })
 
-        print(f"[ENGINE RESULT] Final Aspect Count: {len(transit_aspects)}")
+        print(f"[ENGINE RESULT] Categorized Aspects: Daily({len(transits_categorized['daily'])}), Short({len(transits_categorized['short_term'])}), Long({len(transits_categorized['long_term'])})")
+        
         return {
             "meta": {"type": "transits", "date": transit_date, "target": natal_inp.name},
+            "moon_sign": transit_planets.get("Moon", {}).get("sign", ""),
             "transit_planets": transit_planets_enriched,
-            "aspects": transit_aspects
+            "transits": transits_categorized # 🔥 ТЕПЕРЬ ОТДАЕМ СТРУКТУРИРОВАННЫЙ ОБЪЕКТ
+        }
+
+    # === ГЛАВНЫЙ МЕТОД ГРАФИЧЕСКИХ ЭФЕМЕРИД ===
+    def graphical_ephemeris(self, natal_inp: BirthInput, start_date: str, end_date: str, step_days: int = 5) -> Dict[str, Any]:
+        import datetime
+        from datetime import timedelta
+
+        print(f"\n[ENGINE START] Ephemeris for {natal_inp.name} from {start_date} to {end_date} (step: {step_days} days)")
+        
+        # 1. Получаем натальную карту (только координаты планет для горизонтальных линий)
+        natal_data = self.natal(natal_inp)
+        natal_planets = [{"name": p["name"], "abs_pos": p["abs_pos"]} for p in natal_data["planets"]]
+        
+        # 2. Генерируем таймлайн
+        start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+        
+        ephemeris_data = []
+        curr_dt = start_dt
+        
+        # Точки, которые будем отслеживать (берем из констант движка)
+        node_key = "True_North_Lunar_Node" if natal_inp.node_type == "true" else "Mean_North_Lunar_Node"
+        target_points = TARGET_POINTS_BASE + [(node_key, node_key)]
+
+        while curr_dt <= end_dt:
+            y, m, d = curr_dt.year, curr_dt.month, curr_dt.day
+            
+            # Создаем болванку для транзитного дня (12:00)
+            t_inp = BirthInput(
+                name="Transit", date=f"{y:04d}-{m:02d}-{d:02d}", time="12:00:00",
+                tz=natal_inp.tz, lat=natal_inp.lat, lon=natal_inp.lon 
+            )
+            
+            # Строим subject напрямую, чтобы не вызывать тяжелые анализаторы
+            subject = self.build_subject(t_inp)
+            
+            day_data = {"date": curr_dt.strftime("%Y-%m-%d")}
+            
+            # Собираем абсолютные градусы (0-360) всех планет и астероидов на этот день
+            for attr, label in target_points:
+                p = self._extract_planet(subject, attr, label)
+                if p:
+                    day_data[p["name"]] = round(p["abs_pos"], 4) 
+                    
+            ephemeris_data.append(day_data)
+            curr_dt += timedelta(days=step_days)
+            
+        print(f"[ENGINE RESULT] Ephemeris generated: {len(ephemeris_data)} data points")
+        
+        return {
+            "meta": {"type": "ephemeris", "start": start_date, "end": end_date, "step": step_days},
+            "natal_planets": natal_planets,
+            "ephemeris": ephemeris_data
         }
 
     # === ГЛАВНЫЙ МЕТОД ХОРАРА ===

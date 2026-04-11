@@ -1,0 +1,157 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Astro Engine API",
+    "description": "OpenAPI спецификация (генерированная вручную) для основных эндпойнтов сервиса.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://localhost:8000" }
+  ],
+  "security": [ { "ApiKeyAuth": [] } ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    },
+    "schemas": {
+      "NatalChartRequest": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string", "description": "YYYY-MM-DD or YYYY/MM/DD" },
+          "time": { "type": "string", "description": "HH:MM:SS" },
+          "tz": { "type": "string", "description": "Timezone like +03:00 or Europe/Warsaw" },
+          "lat": { "type": "number", "format": "float" },
+          "lon": { "type": "number", "format": "float" },
+          "name": { "type": "string" },
+          "house_system": { "type": "string" },
+          "node_type": { "type": "string" }
+        },
+        "required": ["date","time","tz","lat","lon"]
+      },
+      "DailyPredictionRequest": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string" },
+          "time": { "type": "string" },
+          "tz": { "type": "string" },
+          "lat": { "type": "number", "format": "float" },
+          "lon": { "type": "number", "format": "float" },
+          "target_date": { "type": "string", "description": "YYYY-MM-DD" }
+        },
+        "required": ["date","time","tz","lat","lon","target_date"]
+      },
+      "SynastryRequest": {
+        "type": "object",
+        "properties": {
+          "person1": { "$ref": "#/components/schemas/NatalChartRequest" },
+          "person2": { "$ref": "#/components/schemas/NatalChartRequest" }
+        },
+        "required": ["person1","person2"]
+      },
+      "Transit": {
+        "type": "object",
+        "properties": {
+          "transit_planet": { "type": "string" },
+          "aspect": { "type": "string" },
+          "natal_planet": { "type": "string" },
+          "orb": { "type": "number" },
+          "is_applying": { "type": "boolean" }
+        }
+      },
+      "TransitsResponse": {
+        "type": "object",
+        "properties": {
+          "target_date": { "type": "string" },
+          "transits": { "type": "array", "items": { "$ref": "#/components/schemas/Transit" } }
+        }
+      },
+      "HoraryRequest": {
+        "type": "object",
+        "properties": {
+          "lat": { "type": "number", "format": "float" },
+          "lon": { "type": "number", "format": "float" },
+          "question": { "type": "string" },
+          "dt_utc": { "type": "string" }
+        },
+        "required": ["lat","lon","question","dt_utc"]
+      },
+      "SolarReturnRequest": {
+        "type": "object",
+        "properties": {
+          "user_data": { "$ref": "#/components/schemas/NatalChartRequest" },
+          "year": { "type": "integer" },
+          "return_lat": { "type": "number", "format": "float" },
+          "return_lon": { "type": "number", "format": "float" },
+          "return_tz": { "type": "string" }
+        },
+        "required": ["user_data","year"]
+      },
+      "RelocationRequest": {
+        "allOf": [ { "$ref": "#/components/schemas/NatalChartRequest" }, { "type":"object", "properties": { "target_lat": { "type":"number" }, "target_lon": { "type":"number" }, "city_name": { "type":"string" } }, "required": ["target_lat","target_lon","city_name"] } ]
+      },
+      "BulkRelocationRequest": {
+        "allOf": [ { "$ref": "#/components/schemas/NatalChartRequest" }, { "type":"object", "properties": { "coordinates": { "type":"array", "items": { "type":"object", "properties": { "lat": { "type":"number" }, "lon": { "type":"number" } } } } } } ]
+      },
+      "CheckPointRequest": {
+        "allOf": [ { "$ref": "#/components/schemas/NatalChartRequest" }, { "type":"object", "properties": { "target_lat": { "type":"number" }, "target_lon": { "type":"number" }, "target_name": { "type":"string" } }, "required": ["target_lat","target_lon","target_name"] } ]
+      }
+    }
+  },
+  "paths": {
+    "/natal": {
+      "post": {
+        "summary": "Natal chart (JSON)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } },
+        "responses": { "200": { "description": "Natal chart data" } }
+      }
+    },
+    "/natal_web": {
+      "post": { "summary": "Natal chart for web (data only)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } }, "responses": { "200": { "description": "Natal chart JSON for frontend" } } }
+    },
+    "/natal_svg": {
+      "post": { "summary": "Generate natal SVG", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } }, "responses": { "200": { "description": "SVG string wrapped in JSON" } } }
+    },
+    "/synastry": {
+      "post": { "summary": "Synastry of two people", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SynastryRequest" } } } }, "responses": { "200": { "description": "Synastry result (aspects, overlays)" } } }
+    },
+    "/horary": {
+      "post": { "summary": "Horary chart", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HoraryRequest" } } } }, "responses": { "200": { "description": "Horary result" } } }
+    },
+    "/solar": {
+      "post": { "summary": "Solar return", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SolarReturnRequest" } } } }, "responses": { "200": { "description": "Solar return chart" } } }
+    },
+    "/predict/daily": {
+      "post": { "summary": "Daily transits (predict)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DailyPredictionRequest" } } } }, "responses": { "200": { "description": "Transits data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TransitsResponse" } } } } } }
+    },
+    "/predict/ephemeris": {
+      "post": { "summary": "Graphical ephemeris", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "date": { "type": "string" }, "time": { "type": "string" }, "tz": { "type": "string" }, "lat": { "type": "number" }, "lon": { "type": "number" }, "start_date": { "type": "string" }, "end_date": { "type": "string" }, "step_days": { "type": "integer" } } } } } }, "responses": { "200": { "description": "Ephemeris data" } } }
+    },
+    "/geo/astrocartography-full": {
+      "post": { "summary": "Full astrocartography + local-space + scored cities", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } }, "responses": { "200": { "description": "Lines and cities" } } }
+    },
+    "/geo/astrocartography": {
+      "post": { "summary": "Astrocartography lines", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } }, "responses": { "200": { "description": "Lines only" } } }
+    },
+    "/geo/local-space": {
+      "post": { "summary": "Local space lines", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } }, "responses": { "200": { "description": "Local space data" } } }
+    },
+    "/geo/evaluate_city": {
+      "post": { "summary": "Evaluate relocation to a city", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RelocationRequest" } } } }, "responses": { "200": { "description": "Raw relocation data" } } }
+    },
+    "/geo/evaluate_cities_bulk": {
+      "post": { "summary": "Bulk evaluate cities", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BulkRelocationRequest" } } } }, "responses": { "200": { "description": "List of relocation raw data" } } }
+    },
+    "/geo/check_point": {
+      "post": { "summary": "Check a single point (click)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CheckPointRequest" } } } }, "responses": { "200": { "description": "Check result" } } }
+    },
+    "/geo/check-local-point": {
+      "post": { "summary": "Check local space point", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CheckPointRequest" } } } }, "responses": { "200": { "description": "Local space check result" } } }
+    },
+    "/geo/local-space-chart": {
+      "post": { "summary": "Local space chart (azimuths, altitude, local aspects)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NatalChartRequest" } } } }, "responses": { "200": { "description": "Local space chart" } } }
+    },
+    "/health": {
+      "get": { "summary": "Health check", "responses": { "200": { "description": "OK" } } }
+    }
+  }
+}

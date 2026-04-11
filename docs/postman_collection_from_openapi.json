@@ -1,0 +1,219 @@
+{
+  "info": {
+    "name": "Astro Engine - Generated from OpenAPI",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Коллекция Postman, автоматически сгенерированная из docs/openapi.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000" },
+    { "key": "INTERNAL_API_KEY", "value": "your-secret" }
+  ],
+  "item": [
+    {
+      "name": "GET /health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+      }
+    },
+    {
+      "name": "POST /natal",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"name\": \"User\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/natal", "host": ["{{baseUrl}}"], "path": ["natal"] }
+      }
+    },
+    {
+      "name": "POST /natal_web",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"house_system\": \"P\"\n}" },
+        "url": { "raw": "{{baseUrl}}/natal_web", "host": ["{{baseUrl}}"], "path": ["natal_web"] }
+      }
+    },
+    {
+      "name": "POST /natal_svg",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36\n}" },
+        "url": { "raw": "{{baseUrl}}/natal_svg", "host": ["{{baseUrl}}"], "path": ["natal_svg"] }
+      }
+    },
+    {
+      "name": "POST /synastry",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"person1\": {\"date\":\"1987-05-15\",\"time\":\"13:45:00\",\"tz\":\"+03:00\",\"lat\":59.93,\"lon\":30.36},\n  \"person2\": {\"date\":\"1990-10-01\",\"time\":\"08:30:00\",\"tz\":\"+02:00\",\"lat\":48.85,\"lon\":2.35}\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/synastry", "host": ["{{baseUrl}}"], "path": ["synastry"] }
+      }
+    },
+    {
+      "name": "POST /horary",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"lat\":59.93,\n  \"lon\":30.36,\n  \"question\":\"Will I get the job?\",\n  \"dt_utc\":\"2026-04-11T12:30:00Z\"\n}" },
+        "url": { "raw": "{{baseUrl}}/horary", "host": ["{{baseUrl}}"], "path": ["horary"] }
+      }
+    },
+    {
+      "name": "POST /solar",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"user_data\": {\"date\":\"1987-05-15\",\"time\":\"13:45:00\",\"tz\":\"+03:00\",\"lat\":59.93,\"lon\":30.36},\n  \"year\":2026\n}" },
+        "url": { "raw": "{{baseUrl}}/solar", "host": ["{{baseUrl}}"], "path": ["solar"] }
+      }
+    },
+    {
+      "name": "POST /predict/daily",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"target_date\": \"2026-05-01\"\n}" },
+        "url": { "raw": "{{baseUrl}}/predict/daily", "host": ["{{baseUrl}}"], "path": ["predict","daily"] }
+      }
+    },
+    {
+      "name": "POST /predict/ephemeris",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"start_date\": \"2026-01-01\",\n  \"end_date\": \"2026-12-31\",\n  \"step_days\": 7\n}" },
+        "url": { "raw": "{{baseUrl}}/predict/ephemeris", "host": ["{{baseUrl}}"], "path": ["predict","ephemeris"] }
+      }
+    },
+    {
+      "name": "POST /geo/astrocartography-full",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/astrocartography-full", "host": ["{{baseUrl}}"], "path": ["geo","astrocartography-full"] }
+      }
+    },
+    {
+      "name": "POST /geo/astrocartography",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/astrocartography", "host": ["{{baseUrl}}"], "path": ["geo","astrocartography"] }
+      }
+    },
+    {
+      "name": "POST /geo/local-space",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/local-space", "host": ["{{baseUrl}}"], "path": ["geo","local-space"] }
+      }
+    },
+    {
+      "name": "POST /geo/evaluate_city",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"target_lat\": 48.85,\n  \"target_lon\": 2.35,\n  \"city_name\": \"Paris\"\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/evaluate_city", "host": ["{{baseUrl}}"], "path": ["geo","evaluate_city"] }
+      }
+    },
+    {
+      "name": "POST /geo/evaluate_cities_bulk",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"coordinates\": [[48.85,2.35],[40.71,-74.0]]\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/evaluate_cities_bulk", "host": ["{{baseUrl}}"], "path": ["geo","evaluate_cities_bulk"] }
+      }
+    },
+    {
+      "name": "POST /geo/check_point",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"target_lat\": 48.85,\n  \"target_lon\": 2.35,\n  \"target_name\": \"Paris spot\"\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/check_point", "host": ["{{baseUrl}}"], "path": ["geo","check_point"] }
+      }
+    },
+    {
+      "name": "POST /geo/check-local-point",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36,\n  \"target_lat\": 48.85,\n  \"target_lon\": 2.35,\n  \"target_name\": \"Paris local\"\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/check-local-point", "host": ["{{baseUrl}}"], "path": ["geo","check-local-point"] }
+      }
+    },
+    {
+      "name": "POST /geo/local-space-chart",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-API-Key", "value": "{{INTERNAL_API_KEY}}" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"User\",\n  \"date\": \"1987-05-15\",\n  \"time\": \"13:45:00\",\n  \"tz\": \"+03:00\",\n  \"lat\": 59.93,\n  \"lon\": 30.36\n}" },
+        "url": { "raw": "{{baseUrl}}/geo/local-space-chart", "host": ["{{baseUrl}}"], "path": ["geo","local-space-chart"] }
+      }
+    }
+  ]
+}
