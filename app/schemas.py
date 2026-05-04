@@ -54,6 +54,24 @@ class SolarReturnRequest(BaseModel):
     return_lon: float | None = Field(None, description="Долгота места пребывания (Н.Новгород)")
     return_tz: str | None = Field(None, description="Часовой пояс места пребывания")
 
+class LunarRequest(BaseModel):
+    person: NatalChartRequest = Field(..., description="Данные рождения")
+    target_date: str = Field(..., description="Целевая дата в формате YYYY-MM-DD")
+    loc_lat: float = Field(..., description="Широта места пребывания")
+    loc_lon: float = Field(..., description="Долгота места пребывания")
+    loc_tz: str = Field(..., description="Часовой пояс места пребывания")
+
+class ProgressionRequest(BaseModel):
+    person: NatalChartRequest = Field(..., description="Данные рождения")
+    target_date: str = Field(..., description="Целевая дата прогноза (на какой момент смотрим) в формате YYYY-MM-DD")
+
+class ElectionalRequest(BaseModel):
+    start_date: str = Field(..., description="Начало периода (YYYY-MM-DD)")
+    end_date: str = Field(..., description="Конец периода (YYYY-MM-DD)")
+    lat: float
+    lon: float
+    tz: str
+
 class RelocationRequest(NatalChartRequest):
     target_lat: float
     target_lon: float
@@ -66,3 +84,8 @@ class CheckPointRequest(NatalChartRequest):
     target_lat: float
     target_lon: float
     target_name: str
+
+class ContentHoroscopeRequest(BaseModel):
+    sign: str = Field(..., description="Короткое имя знака (Ari, Tau, Gem, Can, Leo, Vir, Lib, Sco, Sag, Cap, Aqu, Pis)")
+    start_date: str = Field(..., description="Начало периода прогноза (YYYY-MM-DD)")
+    end_date: str = Field(..., description="Конец периода прогноза (YYYY-MM-DD)")

@@ -82,3 +82,23 @@ TARGET_POINTS_BASE = [
     ("Ceres", "Ceres"), ("Pallas", "Pallas"), 
     ("Juno", "Juno"), ("Vesta", "Vesta")
 ]
+
+# === 6. ПАТТЕРНЫ (Идентификаторы и Английские названия для дебага) ===
+ASPECT_PATTERN_NAMES = {
+    "t_square": "T-Square",
+    "grand_trine": "Grand Trine",
+    "yod": "Yod",
+    "grand_cross": "Grand Cross",
+    "mystic_rectangle": "Mystic Rectangle",
+    "kite": "Kite"
+}
+
+JONES_PATTERN_NAMES = {
+    "splash": "Splash",
+    "bucket": "Bucket",
+    "seesaw": "See-Saw",
+    "bundle": "Bundle",
+    "bowl": "Bowl",
+    "locomotive": "Locomotive",
+    "splay": "Splay"
+}
