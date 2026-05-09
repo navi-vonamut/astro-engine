@@ -9,10 +9,10 @@ ENV PIP_NO_CACHE_DIR=1
 ENV PYTHONUNBUFFERED=1
 
 # 1. Установка системных зависимостей
-# build-essential необходим для сборки библиотек с C-расширениями (numpy, pyswisseph)
 RUN apt-get update && apt-get install -y \
     build-essential \
     gcc \
+    wget \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
@@ -20,6 +20,10 @@ COPY requirements.txt /app/requirements.txt
 # 2. Установка Python-зависимостей
 RUN pip install --upgrade pip \
  && pip install -r /app/requirements.txt
+
+# Скачиваем файл орбит ВСЕХ главных астероидов (Хирон, Церера, Паллада, Юнона, Веста) на 1800-2399 годы
+RUN mkdir -p /usr/share/swisseph && \
+    wget -qO /usr/share/swisseph/seas_18.se1 https://raw.githubusercontent.com/aloistr/swisseph/master/ephe/seas_18.se1
 
 # 3. Копируем исходный код проекта
 COPY . /app

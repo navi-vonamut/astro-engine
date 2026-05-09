@@ -3,8 +3,9 @@ services:
     build: .
     container_name: kerykeion_engine 
     restart: always
-    ports:
-      - "8001:8000" 
+    # 🔥 ЗАКРЫВАЕМ ПОРТЫ ОТ ИНТЕРНЕТА
+    # ports:
+    #   - "8001:8000"
     networks:
       - astro-network 
     environment:
