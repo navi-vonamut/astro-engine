@@ -38,6 +38,7 @@ async def horary(request: HoraryRequest, api_key: str = Depends(verify_internal_
             tz="+00:00", 
             lat=request.lat,
             lon=request.lon,
+            house_system="R"
         )
 
         # 3. Вызываем расчет

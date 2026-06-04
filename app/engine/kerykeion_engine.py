@@ -27,8 +27,13 @@ from app.engine.analyzers.dominants import calculate_dominants
 from app.engine.analyzers.aspect_patterns import calculate_aspect_patterns
 from app.engine.analyzers.planet_status import calculate_planet_status
 from app.engine.calculators.content_calc import generate_content_events
+from app.engine.analyzers.synastry_scoring import calculate_synastry_indices
 
 class KerykeionEngine:
+    def __init__(self):
+        # 🔥 Жестко указываем путь к системной папке с эфемеридами,
+        # чтобы переопределить дефолтные настройки Kerykeion
+        swe.set_ephe_path('/usr/share/swisseph')
     def build_subject(self, inp: BirthInput):
         y, m, d = parse_ymd(inp.date)
         hh, mm = parse_hm(inp.time)
@@ -539,10 +544,20 @@ class KerykeionEngine:
     # === ГЛАВНЫЙ МЕТОД ХОРАРА ===
     def horary(self, inp: BirthInput, question: str) -> Dict[str, Any]:
         chart = self.natal(inp)
-        sun_pos = next((p["abs_pos"] for p in chart["planets"] if p["name"] == "Sun"), 0.0)
+        
+        # Находим Солнце, чтобы понять дневная карта или ночная
+        sun = next((p for p in chart["planets"] if p["name"] == "Sun"), None)
+        sun_pos = sun["abs_pos"] if sun else 0.0
+        
+        # Дневная карта, если Солнце в домах над горизонтом (с 7 по 12)
+        # Обрати внимание: если дом не определился (None), считаем по умолчанию дневной
+        is_day_chart = True
+        if sun and sun.get("house"):
+            is_day_chart = sun["house"] >= 7
+
+        from app.engine.calculators.dignities_calc import get_essential_dignities
         
         enriched_planets = []
-        # Фиктивные точки, которым не страшно сожжение
         immune_to_combust = {
             "Sun", "True_North_Lunar_Node", "Mean_North_Lunar_Node", 
             "True_South_Lunar_Node", "Mean_South_Lunar_Node", 
@@ -554,46 +569,75 @@ class KerykeionEngine:
             p["is_cazimi"] = False
             p["in_via_combusta"] = False
             
-            # 1. Проверка на Сожжение и Казими
+            # --- Существующий код сожжения ---
             if p["name"] not in immune_to_combust:
                 diff = abs(p["abs_pos"] - sun_pos)
                 if diff > 180: 
                     diff = 360 - diff
                 
                 if diff <= 0.28:
-                    p["is_cazimi"] = True    # В сердце Солнца (Триумф)
+                    p["is_cazimi"] = True    
                 elif diff <= 8.5:
-                    p["is_combust"] = True   # Сожжение (Ослабление)
+                    p["is_combust"] = True   
 
-            # 2. Проверка на Via Combusta (Сожженный путь)
-            # От 15° Весов (195°) до 15° Скорпиона (225°)
             if 195.0 <= p["abs_pos"] <= 225.0:
                 p["in_via_combusta"] = True
+                
+            # 🔥 НОВОЕ: Считаем эссенциальные достоинства
+            # Считаем только для реальных планет, узлам и фиктивным точкам это не нужно
+            if p["name"] in ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]:
+                p["dignities"] = get_essential_dignities(p["name"], p["sign_id"], p["degree"], is_day_chart)
 
             enriched_planets.append(p)
             
         chart["planets"] = enriched_planets
         chart["meta"]["type"] = "horary"
         chart["meta"]["question"] = question
+        chart["meta"]["is_day_chart"] = is_day_chart # Отдадим на фронт для справки
         return chart
 
-    # === ГЛАВНЫЙ МЕТОД СИНАСТРИИ ===
+    # === ГЛАВНЫЙ МЕТОД СИНАСТРИИ (ПОЛНОСТЬЮ ПРОКАЧАННЫЙ) ===
     def synastry(self, p1: BirthInput, p2: BirthInput) -> Dict[str, Any]:
-        c1 = self.natal(p1, lite=True) # 🔥 Lite
-        c2 = self.natal(p2, lite=True) # 🔥 Lite
+        # Строим полные карты (lite=False), чтобы внутри них отработали расчеты 
+        # баланса, доминант, фиктивных точек и углов Asc/Desc/MC/IC для каждого.
+        c1 = self.natal(p1, lite=False) 
+        c2 = self.natal(p2, lite=False) 
         
-        # 🔥 Передаем готовые массивы планет в наш новый калькулятор аспектов
+        # Рассчитываем взаимные аспекты (включая пересечения с углами карт)
         aspects = get_synastry_aspects(c1["planets"], c2["planets"])
         
+        # 🔥 ПОДМЕШИВАЕМ АНАЛИЗАТОР СКОРИНГА СИНАСТРИИ
+        synastry_analysis = calculate_synastry_indices(aspects)
+        
+        # 🔥 ФОРМИРУЕМ СРАВНИТЕЛЬНЫЙ БАЛАНС СТИХИЙ И КАЧЕСТВ ДЛЯ ИИ
+        balance_comparison = {
+            "elements": {
+                "owner": c1.get("balance", {}).get("elements", {}),
+                "partner": c2.get("balance", {}).get("elements", {})
+            },
+            "qualities": {
+                "owner": c1.get("balance", {}).get("qualities", {}),
+                "partner": c2.get("balance", {}).get("qualities", {})
+            }
+        }
+        
         return {
-            "meta": {"type": "synastry", "p1": p1.name, "p2": p2.name},
-            "owner_chart": c1,    # Опционально: отдаем карты целиком, чтобы фронт мог их нарисовать
+            "meta": {
+                "type": "synastry", 
+                "p1": p1.name, 
+                "p2": p2.name,
+                "owner_chart_ruler": c1["meta"].get("chart_ruler"),
+                "partner_chart_ruler": c2["meta"].get("chart_ruler")
+            },
+            "owner_chart": c1,    
             "partner_chart": c2,  
             "aspects": aspects,
             "overlays": {
                 "owner_planets_in_partner_houses": calculate_house_overlays(c1["planets"], c2["houses"]),
                 "partner_planets_in_owner_houses": calculate_house_overlays(c2["planets"], c1["houses"])
-            }
+            },
+            "balance_comparison": balance_comparison,
+            "synastry_analysis": synastry_analysis # Подмешали наши индексы!
         }
     
     # === ГЛАВНЫЙ МЕТОД КОМПОЗИТА ===

@@ -21,9 +21,10 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip \
  && pip install -r /app/requirements.txt
 
-# Скачиваем файл орбит ВСЕХ главных астероидов (Хирон, Церера, Паллада, Юнона, Веста) на 1800-2399 годы
+# Скачиваем файлы орбит астероидов (Хирон, Церера, Паллада, Юнона, Веста) для обеих эпох
 RUN mkdir -p /usr/share/swisseph && \
-    wget -qO /usr/share/swisseph/seas_18.se1 https://raw.githubusercontent.com/aloistr/swisseph/master/ephe/seas_18.se1
+    wget -qO /usr/share/swisseph/seas_18.se1 https://raw.githubusercontent.com/aloistr/swisseph/master/ephe/seas_18.se1 && \
+    wget -qO /usr/share/swisseph/seas_12.se1 https://raw.githubusercontent.com/aloistr/swisseph/master/ephe/seas_12.se1
 
 # 3. Копируем исходный код проекта
 COPY . /app
