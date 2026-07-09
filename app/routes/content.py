@@ -14,3 +14,11 @@ async def get_content_horoscope(request: ContentHoroscopeRequest, api_key: str =
         start_date=request.start_date,
         end_date=request.end_date
     )
+
+@router.post("/content/lunar-calendar")
+async def get_lunar_calendar(request: ContentHoroscopeRequest, api_key: str = Depends(verify_internal_api_key)):
+    """Генерация лунного календаря (лунные дни, ингрессии, Холостая Луна)"""
+    return _engine.lunar_calendar(
+        start_date=request.start_date,
+        end_date=request.end_date
+    )

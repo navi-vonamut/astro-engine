@@ -1,6 +1,7 @@
 import swisseph as swe
 import datetime
 from typing import Dict, List, Any
+import math
 
 # Импортируем ваши константы
 from app.engine.core.constants import SIGNS_SHORT, SWISSEPH_OBJECTS, ASPECT_RULES
@@ -218,4 +219,132 @@ def generate_content_events(target_sign: str, start_date: str, end_date: str) ->
         },
         "start_positions": start_positions,
         "events": events
+    }
+
+def get_lunar_day(moon_lon: float, sun_lon: float) -> int:
+    """Рассчитывает лунный день (каждые 12 градусов отхождения Луны от Солнца)"""
+    diff = (moon_lon - sun_lon) % 360
+    return int(diff // 12) + 1
+
+def find_voc_start(ingress_dt: datetime.datetime) -> dict:
+    """
+    Ищет начало Холостой Луны (Void of Course).
+    Шагает назад во времени от момента ингрессии, пока не найдет 
+    последний мажорный аспект Луны к любой из главных планет.
+    """
+    MAJOR_PLANETS = ["Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"]
+    TARGET_ASPECTS = [0, 60, 90, 120, 180]
+    
+    curr_dt = ingress_dt
+    step = datetime.timedelta(minutes=5) # Шаг в 5 минут для высокой точности
+    
+    jd_curr = swe.julday(curr_dt.year, curr_dt.month, curr_dt.day, curr_dt.hour + curr_dt.minute/60.0)
+    
+    # Записываем изначальные дистанции от Луны до планет в момент ингрессии
+    prev_dists = {}
+    moon_pos = swe.calc_ut(jd_curr, SWISSEPH_OBJECTS["Moon"])[0][0]
+    
+    for p_name in MAJOR_PLANETS:
+        p_pos = swe.calc_ut(jd_curr, SWISSEPH_OBJECTS[p_name])[0][0]
+        diff = abs(moon_pos - p_pos)
+        if diff > 180: diff = 360 - diff
+        prev_dists[p_name] = diff
+        
+    # Шагаем назад до 3 суток (864 итерации по 5 минут)
+    for _ in range(864):
+        curr_dt -= step
+        jd_curr = swe.julday(curr_dt.year, curr_dt.month, curr_dt.day, curr_dt.hour + curr_dt.minute/60.0)
+        
+        moon_pos = swe.calc_ut(jd_curr, SWISSEPH_OBJECTS["Moon"])[0][0]
+        for p_name in MAJOR_PLANETS:
+            p_pos = swe.calc_ut(jd_curr, SWISSEPH_OBJECTS[p_name])[0][0]
+            diff = abs(moon_pos - p_pos)
+            if diff > 180: diff = 360 - diff
+            
+            old_dist = prev_dists[p_name]
+            
+            # Если между старым и новым шагом мы пересекли точный градус аспекта (0, 60, 90, 120, 180)
+            for asp in TARGET_ASPECTS:
+                if (old_dist - asp) * (diff - asp) <= 0:
+                    # МЫ НАШЛИ ПОСЛЕДНИЙ АСПЕКТ!
+                    return {
+                        "voc_start": curr_dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "last_aspect": MAJOR_ASPECTS[asp],
+                        "planet": p_name
+                    }
+            prev_dists[p_name] = diff
+            
+    return None
+
+def generate_lunar_calendar(start_date: str, end_date: str) -> Dict[str, Any]:
+    """Генерирует лунный календарь: фазы, дни, ингрессии и Холостую Луну (VOC)"""
+    start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+    delta_days = (end_dt - start_dt).days
+
+    daily_info = []
+    voc_periods = []
+    
+    prev_sign_id = None
+    
+    # 1. Сначала сканируем ингрессии Луны с шагом в 15 минут для поиска Холостой Луны
+    curr_scan = start_dt
+    scan_end = end_dt + datetime.timedelta(days=1)
+    
+    jd = swe.julday(curr_scan.year, curr_scan.month, curr_scan.day, curr_scan.hour)
+    moon_lon = swe.calc_ut(jd, SWISSEPH_OBJECTS["Moon"])[0][0]
+    prev_sign_id = int(moon_lon // 30)
+    
+    while curr_scan <= scan_end:
+        curr_scan += datetime.timedelta(minutes=15)
+        jd = swe.julday(curr_scan.year, curr_scan.month, curr_scan.day, curr_scan.hour + curr_scan.minute/60.0)
+        moon_lon = swe.calc_ut(jd, SWISSEPH_OBJECTS["Moon"])[0][0]
+        curr_sign_id = int(moon_lon // 30)
+        
+        # Если Луна сменила знак
+        if curr_sign_id != prev_sign_id:
+            ingress_time = curr_scan
+            voc_data = find_voc_start(ingress_time)
+            
+            if voc_data:
+                voc_periods.append({
+                    "voc_start": voc_data["voc_start"],
+                    "voc_end": ingress_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "ingress_sign": SIGNS_SHORT[curr_sign_id],
+                    "last_aspect": f"{voc_data['last_aspect']} with {voc_data['planet']}"
+                })
+            prev_sign_id = curr_sign_id
+
+    # 2. Генерируем информацию на каждый день (на 12:00 по UTC)
+    for day_offset in range(delta_days + 1):
+        curr_dt = start_dt + datetime.timedelta(days=day_offset)
+        jd = swe.julday(curr_dt.year, curr_dt.month, curr_dt.day, 12.0)
+        
+        moon_lon = swe.calc_ut(jd, SWISSEPH_OBJECTS["Moon"])[0][0]
+        sun_lon = swe.calc_ut(jd, SWISSEPH_OBJECTS["Sun"])[0][0]
+        
+        sign_id = int(moon_lon // 30)
+        lunar_day = get_lunar_day(moon_lon, sun_lon)
+        
+        # Быстрый расчет процента освещенности (от 0 до 100)
+        illumination = 50 * (1 - swe.calc_ut(jd, SWISSEPH_OBJECTS["Moon"])[0][0] * 0) # Упрощенно
+        
+        # Корректный расчет освещенности через отхождение
+        diff = (moon_lon - sun_lon) % 360
+        phase_percent = round((1 - math.cos(math.radians(diff))) / 2 * 100, 1)
+
+        daily_info.append({
+            "date": curr_dt.strftime("%Y-%m-%d"),
+            "lunar_day": lunar_day,
+            "moon_sign": SIGNS_SHORT[sign_id],
+            "illumination_percent": phase_percent
+        })
+
+    return {
+        "meta": {
+            "start_date": start_date,
+            "end_date": end_date
+        },
+        "daily_lunar_calendar": daily_info,
+        "void_of_course_periods": voc_periods
     }

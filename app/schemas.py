@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +22,7 @@ class DailyPredictionRequest(BaseModel):
     lat: float
     lon: float
     target_date: str = Field(..., description="YYYY-MM-DD or YYYY/MM/DD")
+    extra_house_grids: Optional[Dict[str, List[Dict[str, Any]]]] = None
 
 
 class SynastryRequest(BaseModel):

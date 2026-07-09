@@ -26,7 +26,7 @@ from app.engine.analyzers.jones_patterns import calculate_jones_pattern
 from app.engine.analyzers.dominants import calculate_dominants
 from app.engine.analyzers.aspect_patterns import calculate_aspect_patterns
 from app.engine.analyzers.planet_status import calculate_planet_status
-from app.engine.calculators.content_calc import generate_content_events
+from app.engine.calculators.content_calc import generate_content_events, generate_lunar_calendar
 from app.engine.analyzers.synastry_scoring import calculate_synastry_indices
 
 class KerykeionEngine:
@@ -406,36 +406,107 @@ class KerykeionEngine:
         
         return res
 
-    # === ГЛАВНЫЙ МЕТОД ТРАНЗИТОВ ===
-    def transits(self, natal_inp: BirthInput, transit_date: str) -> Dict[str, Any]:
+# === ГЛАВНЫЙ МЕТОД ТРАНЗИТОВ ===
+    def transits(self, natal_inp: BirthInput, transit_date: str, extra_house_grids: Optional[Dict[str, List[Dict]]] = None) -> Dict[str, Any]:
         print(f"\n[ENGINE START] Transits for {natal_inp.name} on target date {transit_date}")
+        from datetime import datetime, timedelta
+        
         natal_data = self.natal(natal_inp)
         natal_houses = natal_data["houses"]
         natal_planets = {p["name"]: p for p in natal_data["planets"]}
         
-        # Транзитная карта строится на 12:00 (этого достаточно для захвата всех аспектов дня)
+        # 1. Транзитная карта на СЕГОДНЯ
         y, m, d = parse_ymd(transit_date)
         transit_inp = BirthInput(
             name="Transit", date=f"{y:04d}-{m:02d}-{d:02d}", time="12:00:00",
             tz=natal_inp.tz, lat=natal_inp.lat, lon=natal_inp.lon 
         )
-        
         transit_chart = self.natal(transit_inp)
+        
+        # 🔥 ВОТ ОНА, ПОТЕРЯННАЯ СТРОЧКА:
         transit_planets = {p["name"]: p for p in transit_chart["planets"]}
         
+        # 2. Транзитная карта на ВЧЕРА (для поиска ингрессий)
+        t_date_obj = datetime.strptime(transit_date, "%Y-%m-%d")
+        y_date_obj = t_date_obj - timedelta(days=1)
+        yesterday_inp = BirthInput(
+            name="Transit_Yesterday", date=y_date_obj.strftime("%Y-%m-%d"), time="12:00:00",
+            tz=natal_inp.tz, lat=natal_inp.lat, lon=natal_inp.lon 
+        )
+        yesterday_chart = self.natal(yesterday_inp)
+        yesterday_planets = {p["name"]: p for p in yesterday_chart["planets"]}
+        
         transit_planets_enriched = []
-        for p in transit_chart["planets"]:
-            in_house = get_house_for_degree(p["abs_pos"], natal_houses)
-            p_enriched = p.copy()
-            p_enriched["in_natal_house"] = in_house
+        events = [] 
+
+        # 3. ИЩЕМ ИНГРЕССИИ ПО ВСЕМ СЕТКАМ ДОМОВ
+        for p_today in transit_chart["planets"]:
+            p_name = p_today["name"]
+            
+            # --- БАЗОВАЯ ПРОВЕРКА ПО НАТАЛУ ---
+            in_house_today = get_house_for_degree(p_today["abs_pos"], natal_houses)
+            p_enriched = p_today.copy()
+            p_enriched["in_natal_house"] = in_house_today
+            
+            p_yesterday = yesterday_planets.get(p_name)
+            if p_yesterday:
+                in_house_yesterday = get_house_for_degree(p_yesterday["abs_pos"], natal_houses)
+                
+                # Ингрессия в Знак (она общая для всех сеток)
+                if p_today.get("sign_id") != p_yesterday.get("sign_id"):
+                    events.append({
+                        "planet": p_name,
+                        "type": "sign_ingress",
+                        "from_sign": p_yesterday.get("sign"),
+                        "to_sign": p_today.get("sign")
+                    })
+                
+                # Ингрессия в Натальный Дом
+                if in_house_today != in_house_yesterday:
+                    events.append({
+                        "planet": p_name,
+                        "type": "natal_house_ingress",
+                        "from_house": in_house_yesterday,
+                        "to_house": in_house_today
+                    })
+
+                # ПРОВЕРКА ИНГРЕССИЙ ДЛЯ СОЛЯРА И ЛУНАРА
+                if extra_house_grids:
+                    for grid_name, grid_houses in extra_house_grids.items():
+                        # Считаем, в каких домах Соляра/Лунара планета была вчера и сегодня
+                        grid_house_today = get_house_for_degree(p_today["abs_pos"], grid_houses)
+                        grid_house_yesterday = get_house_for_degree(p_yesterday["abs_pos"], grid_houses)
+                        
+                        if grid_house_today != grid_house_yesterday:
+                            events.append({
+                                "planet": p_name,
+                                "type": f"{grid_name}_house_ingress", 
+                                "grid": grid_name,
+                                "from_house": grid_house_yesterday,
+                                "to_house": grid_house_today
+                            })
+
             transit_planets_enriched.append(p_enriched)
 
         s_transit = self.build_subject(transit_inp)
         s_natal = self.build_subject(natal_inp)
         raw_aspects = get_synastry_aspects(s_transit, s_natal)
         
-        # 🔥 СЛОВАРИ ДЛЯ МАТЕМАТИКИ И КАТЕГОРИЙ
-        ASPECT_ANGLES = {"Conjunction": 0, "Sextile": 60, "Square": 90, "Trine": 120, "Opposition": 180}
+        # СЛОВАРИ ДЛЯ МАТЕМАТИКИ И КАТЕГОРИЙ
+        ASPECT_ANGLES = {
+            "Conjunction": 0, 
+            "Sextile": 60, 
+            "Square": 90, 
+            "Trine": 120, 
+            "Opposition": 180,
+            # Минорные аспекты:
+            "Semisextile": 30,
+            "Semisquare": 45,
+            "Quintile": 72,
+            "Sesquiquadrate": 135,
+            "Biquintile": 144,
+            "Quincunx": 150
+        }
         CATEGORIES = {
             "daily": ["Moon"],
             "short_term": ["Sun", "Mercury", "Venus", "Mars"],
@@ -443,7 +514,6 @@ class KerykeionEngine:
             "points": ["True_North_Lunar_Node", "Mean_North_Lunar_Node", "True_South_Lunar_Node", "Mean_South_Lunar_Node", "Lilith", "Mean_Lilith", "Chiron", "Ceres", "Pallas", "Juno", "Vesta", "Vertex", "Fortune"]
         }
 
-        # 🔥 Добавили 'points'
         transits_categorized = {"daily": [], "short_term": [], "long_term": [], "points": []}
 
         for a in raw_aspects:
@@ -452,13 +522,11 @@ class KerykeionEngine:
             aspect_name = a["aspect"]
             orb = a["orb"]
 
-            # Определяем категорию (По умолчанию кидаем в точки, если вдруг прилетело что-то неизвестное)
             cat = "points"
             if t_name in CATEGORIES["daily"]: cat = "daily"
             elif t_name in CATEGORIES["short_term"]: cat = "short_term"
             elif t_name in CATEGORIES["long_term"]: cat = "long_term"
 
-            # Определяем состояние (Сходится/Расходится)
             state = "unknown"
             t_p = transit_planets.get(t_name)
             n_p = natal_planets.get(n_name)
@@ -485,7 +553,124 @@ class KerykeionEngine:
             "meta": {"type": "transits", "date": transit_date, "target": natal_inp.name},
             "moon_sign": transit_planets.get("Moon", {}).get("sign", ""),
             "transit_planets": transit_planets_enriched,
-            "transits": transits_categorized # 🔥 ТЕПЕРЬ ОТДАЕМ СТРУКТУРИРОВАННЫЙ ОБЪЕКТ
+            "transits": transits_categorized, 
+            "events": events 
+        }
+    
+    # === ГЛАВНЫЙ МЕТОД ПРОГНОЗА НА МЕСЯЦ ===
+    def monthly_overview(self, natal_inp: BirthInput, year: int, month: int) -> Dict[str, Any]:
+        import calendar
+        from datetime import datetime, timedelta
+        from app.engine.core.utils import get_house_for_degree
+        
+        print(f"\n[ENGINE START] Monthly Overview for {natal_inp.name} - {year}-{month:02d}")
+        
+        # 1. Получаем натал пользователя
+        natal_data = self.natal(natal_inp)
+        natal_houses = natal_data["houses"]
+        natal_planets = {p["name"]: p for p in natal_data["planets"]}
+        
+        num_days = calendar.monthrange(year, month)[1]
+        
+        ingresses = []
+        stations = []
+        active_macro_aspects = set() # Используем set, чтобы избежать дубликатов за каждый день
+        lunations = []
+        
+        prev_state = {}
+        prev_sun_moon_dist = None
+        
+        # Медленные планеты и фиктивные точки, задающие фон месяца
+        macro_planets = [
+            "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", 
+            "True_North_Lunar_Node", "Mean_North_Lunar_Node", "Lilith", "Mean_Lilith"
+        ]
+        
+        ASPECT_ANGLES = {"Conjunction": 0, "Sextile": 60, "Square": 90, "Trine": 120, "Opposition": 180}
+        
+        # 2. Прокручиваем каждый день месяца
+        for day in range(1, num_days + 1):
+            date_str = f"{year:04d}-{month:02d}-{day:02d}"
+            
+            # Болванка транзита на середину дня
+            t_inp = BirthInput(
+                name="Transit", date=date_str, time="12:00:00",
+                tz=natal_inp.tz, lat=natal_inp.lat, lon=natal_inp.lon 
+            )
+            
+            t_chart = self.natal(t_inp)
+            t_planets = {p["name"]: p for p in t_chart["planets"]}
+            
+            # --- АНАЛИЗ ИНГРЕССИЙ И РАЗВОРОТОВ ---
+            for p_name, p_data in t_planets.items():
+                if p_name not in prev_state:
+                    prev_state[p_name] = p_data
+                    continue
+                
+                prev_p = prev_state[p_name]
+                
+                # Ингрессия в Знак (Игнорируем быструю Луну)
+                if p_name != "Moon" and p_data.get("sign_id") != prev_p.get("sign_id"):
+                    ingresses.append(f"{date_str}: {p_name} входит в знак {p_data.get('sign')}")
+                
+                # Ингрессия в Натальный Дом (Игнорируем Луну)
+                curr_house = get_house_for_degree(p_data["abs_pos"], natal_houses)
+                prev_house = get_house_for_degree(prev_p["abs_pos"], natal_houses)
+                if p_name != "Moon" and curr_house != prev_house:
+                    ingresses.append(f"{date_str}: {p_name} переходит в {curr_house}-й натальный дом")
+                
+                # Развороты (Ретроградность / Директность)
+                if p_data.get("is_retro") != prev_p.get("is_retro"):
+                    direction = "начинает ретроградное движение" if p_data.get("is_retro") else "возвращается в прямое движение"
+                    stations.append(f"{date_str}: {p_name} {direction}")
+                
+                prev_state[p_name] = p_data
+                
+            # --- АНАЛИЗ МАКРО-АСПЕКТОВ ---
+            for t_name in macro_planets:
+                t_p = t_planets.get(t_name)
+                if not t_p: continue
+                
+                for n_name, n_p in natal_planets.items():
+                    # Смотрим аспекты от медленных только к личным планетам и углам
+                    if n_name not in ["Sun", "Moon", "Mercury", "Venus", "Mars", "Ascendant", "Medium_Coeli"]:
+                        continue
+                        
+                    for aspect_name, angle in ASPECT_ANGLES.items():
+                        dist = abs(t_p["abs_pos"] - n_p["abs_pos"])
+                        if dist > 180: dist = 360 - dist
+                        
+                        # Если аспект точный (орб меньше 1.5 градуса), фиксируем его
+                        orb = abs(dist - angle)
+                        if orb <= 1.5: 
+                            active_macro_aspects.add(f"Транзитный(ая) {t_name} делает {aspect_name} к натальному(ой) {n_name}")
+
+            # --- АНАЛИЗ ЛУНАЦИЙ (Новолуния / Полнолуния) ---
+            sun = t_planets.get("Sun")
+            moon = t_planets.get("Moon")
+            if sun and moon:
+                # Дистанция между Луной и Солнцем (от 0 до 360)
+                dist = (moon["abs_pos"] - sun["abs_pos"]) % 360
+                
+                if prev_sun_moon_dist is not None:
+                    # Новолуние (пересечение 0 градусов)
+                    if prev_sun_moon_dist > 345 and dist < 15:
+                        lunation_house = get_house_for_degree(moon["abs_pos"], natal_houses)
+                        lunations.append(f"{date_str}: Новолуние в {moon['sign']} ({lunation_house}-й натальный дом)")
+                        
+                    # Полнолуние (пересечение 180 градусов)
+                    if prev_sun_moon_dist < 180 and dist >= 180:
+                        lunation_house = get_house_for_degree(moon["abs_pos"], natal_houses)
+                        lunations.append(f"{date_str}: Полнолуние в {moon['sign']} ({lunation_house}-й натальный дом)")
+                        
+                prev_sun_moon_dist = dist
+
+        return {
+            "meta": {"type": "monthly_overview", "year": year, "month": month, "target": natal_inp.name},
+            "macro_trends": list(active_macro_aspects), # Превращаем set обратно в list для JSON
+            "ingresses": ingresses,
+            "stations": stations,
+            "lunations": lunations
         }
 
     # === ГЛАВНЫЙ МЕТОД ГРАФИЧЕСКИХ ЭФЕМЕРИД ===
@@ -691,3 +876,40 @@ class KerykeionEngine:
     def content_horoscope(self, sign: str, start_date: str, end_date: str) -> Dict[str, Any]:
         print(f"\n[ENGINE] Генерация контентных событий для {sign} с {start_date} по {end_date}")
         return generate_content_events(sign, start_date, end_date)
+    
+    # === ГЛАВНЫЙ МЕТОД ЛУННОГО КАЛЕНДАРЯ ===
+    def lunar_calendar(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        print(f"\n[ENGINE] Генерация Лунного календаря с {start_date} по {end_date}")
+        return generate_lunar_calendar(start_date, end_date)
+    
+    # === ГЛАВНЫЙ МЕТОД ФИРДАРОВ ===
+    def firdaria(self, natal_inp: BirthInput, target_date: str) -> Dict[str, Any]:
+        print(f"\n[ENGINE] Фирдары для {natal_inp.name} на {target_date}")
+        from app.engine.calculators.firdaria_calc import calculate_firdaria
+        
+        # 1. Получаем натальную карту, чтобы узнать день/ночь и дома
+        chart = self.natal(natal_inp)
+        
+        # 2. Определяем день или ночь
+        sun = next((p for p in chart["planets"] if p["name"] == "Sun"), None)
+        is_day_chart = True
+        if sun and sun.get("house"):
+            is_day_chart = sun["house"] >= 7
+            
+        # 3. Считаем периоды
+        firdaria_res = calculate_firdaria(natal_inp.date, target_date, is_day_chart)
+        
+        # 4. Находим, в каких домах стоят управители периода
+        major_house = next((p["house"] for p in chart["planets"] if p["name"] == firdaria_res["major_planet"]), None)
+        minor_house = next((p["house"] for p in chart["planets"] if p["name"] == firdaria_res["minor_planet"]), None)
+        
+        return {
+            "meta": {"type": "firdaria", "target_date": target_date, "is_day_chart": is_day_chart},
+            "current_period": {
+                "major_planet": firdaria_res["major_planet"],
+                "major_house": major_house,
+                "minor_planet": firdaria_res["minor_planet"],
+                "minor_house": minor_house,
+                "cycle_age": firdaria_res["cycle_age"]
+            }
+        }

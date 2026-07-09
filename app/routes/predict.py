@@ -13,6 +13,8 @@ router = APIRouter(prefix="/predict", tags=["predict"])
 
 _engine = KerykeionEngine()
 
+# --- СХЕМЫ ЗАПРОСОВ ---
+
 class EphemerisEngineRequest(BaseModel):
     name: str = "User"
     date: str
@@ -23,6 +25,29 @@ class EphemerisEngineRequest(BaseModel):
     start_date: str
     end_date: str
     step_days: int = 5
+
+class FirdariaRequest(BaseModel):
+    name: str = "User"
+    date: str
+    time: str
+    tz: str
+    lat: float
+    lon: float
+    target_date: str
+
+# 🔥 ДОБАВЛЯЕМ СХЕМУ ДЛЯ МЕСЯЧНОГО ПРОГНОЗА
+class MonthlyOverviewRequest(BaseModel):
+    name: str = "User"
+    date: str
+    time: str
+    tz: str
+    lat: float
+    lon: float
+    year: int
+    month: int
+
+
+# --- РОУТЫ ---
 
 @router.post("/daily")
 async def predict_daily(request: DailyPredictionRequest, api_key: str = Depends(verify_internal_api_key)) -> Dict[str, Any]:
@@ -35,8 +60,7 @@ async def predict_daily(request: DailyPredictionRequest, api_key: str = Depends(
         lon=request.lon,
     )
 
-    # Используем новый метод .transits(), который вернет { transit_planets (с домами!), aspects }
-    result = _engine.transits(natal, request.target_date)
+    result = _engine.transits(natal, request.target_date, extra_house_grids=request.extra_house_grids)
     
     return result
 
@@ -51,12 +75,43 @@ async def get_ephemeris(request: EphemerisEngineRequest, api_key: str = Depends(
         lon=request.lon,
     )
 
-    # Вызываем метод, который мы только что написали
     result = _engine.graphical_ephemeris(
         natal_inp=natal, 
         start_date=request.start_date, 
         end_date=request.end_date, 
         step_days=request.step_days
     )
+    
+    return result
+
+@router.post("/firdaria")
+async def get_firdaria(request: FirdariaRequest, api_key: str = Depends(verify_internal_api_key)) -> Dict[str, Any]:
+    natal = BirthInput(
+        name=request.name,
+        date=request.date,
+        time=request.time,
+        tz=request.tz,
+        lat=request.lat,
+        lon=request.lon,
+    )
+
+    result = _engine.firdaria(natal_inp=natal, target_date=request.target_date)
+    
+    return result
+
+# 🔥 ДОБАВЛЯЕМ РОУТ МЕСЯЧНОГО ПРОГНОЗА
+@router.post("/monthly")
+async def get_monthly_overview(request: MonthlyOverviewRequest, api_key: str = Depends(verify_internal_api_key)) -> Dict[str, Any]:
+    natal = BirthInput(
+        name=request.name,
+        date=request.date,
+        time=request.time,
+        tz=request.tz,
+        lat=request.lat,
+        lon=request.lon,
+    )
+
+    # Вызываем метод monthly_overview из движка
+    result = _engine.monthly_overview(natal_inp=natal, year=request.year, month=request.month)
     
     return result
