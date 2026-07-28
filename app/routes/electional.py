@@ -13,5 +13,6 @@ async def get_electional_dates(request: ElectionalRequest, api_key: str = Depend
         end_date=request.end_date,
         lat=request.lat,
         lon=request.lon,
-        tz=request.tz
+        tz=request.tz,
+        category=request.category or "business"
     )

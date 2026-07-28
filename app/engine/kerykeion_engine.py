@@ -19,6 +19,9 @@ from app.engine.calculators.composite_calc import get_composite_planets, get_com
 from app.engine.calculators.solar_calc import calculate_solar_return_input
 from app.engine.calculators.lunar_calc import calculate_lunar_return_input
 from app.engine.calculators.progression_calc import calculate_progressed_input
+from app.engine.calculators.directions_calc import (
+    calculate_direction_arc, calculate_directed_chart, calculate_directional_aspects
+)
 from app.engine.calculators.electional_calc import generate_daily_inputs, analyze_electional_day
 from app.engine.calculators.aspects_calc import calculate_natal_aspects
 from app.engine.analyzers.scoring import get_compensatory_data
@@ -239,8 +242,8 @@ class KerykeionEngine:
         return prog_chart
     
     # === ГЛАВНЫЙ МЕТОД ЭЛЕКТИВА (АСТРО-ПЛАНИРОВЩИК) ===
-    def electional_search(self, start_date: str, end_date: str, lat: float, lon: float, tz: str) -> Dict[str, Any]:
-        print(f"\n[ENGINE] Элективный поиск с {start_date} по {end_date} для локации {lat}, {lon}")
+    def electional_search(self, start_date: str, end_date: str, lat: float, lon: float, tz: str, category: str = "business") -> Dict[str, Any]:
+        print(f"\n[ENGINE] Элективный поиск с {start_date} по {end_date} для локации {lat}, {lon} (Категория: {category})")
         
         daily_inputs = generate_daily_inputs(start_date, end_date, lat, lon, tz)
         
@@ -248,13 +251,14 @@ class KerykeionEngine:
         for inp in daily_inputs:
             # Строим карту на каждый день
             day_chart = self.natal(inp)
-            # Извлекаем только самую суть
-            day_summary = analyze_electional_day(day_chart)
+            # Извлекаем скоринг и суть с учетом категории
+            day_summary = analyze_electional_day(day_chart, category=category)
             days_analysis.append(day_summary)
             
         return {
             "meta": {
                 "type": "electional_search",
+                "category": category,
                 "start_date": start_date,
                 "end_date": end_date,
                 "location": {"lat": lat, "lon": lon}
@@ -912,4 +916,46 @@ class KerykeionEngine:
                 "minor_house": minor_house,
                 "cycle_age": firdaria_res["cycle_age"]
             }
+        }
+
+    # === ГЛАВНЫЙ МЕТОД ДИРЕКЦИЙ ===
+    def directions(self, natal_inp: BirthInput, target_date: str, mode: str = "symbolic", orb: float = 1.0) -> Dict[str, Any]:
+        print(f"\n[ENGINE] Расчет Дирекций для {natal_inp.name} на {target_date} (режим: {mode}, орб: {orb}°)")
+        
+        # 1. Получаем натальную карту
+        natal_chart = self.natal(natal_inp)
+        natal_planets = natal_chart["planets"]
+        natal_houses = natal_chart["houses"]
+        
+        # 2. Вычисляем дугу дирекций и возраст
+        arc_degrees, age_in_years = calculate_direction_arc(natal_inp, target_date, mode=mode)
+        
+        # 3. Рассчитываем дирекционную карту
+        directed_chart = calculate_directed_chart(natal_planets, natal_houses, arc_degrees)
+        
+        # 4. Рассчитываем дирекционные аспекты
+        dir_aspects = calculate_directional_aspects(
+            directed_planets=directed_chart["planets"],
+            directed_houses=directed_chart["houses"],
+            natal_planets=natal_planets,
+            natal_houses=natal_houses,
+            max_orb=orb
+        )
+        
+        return {
+            "meta": {
+                "type": "directions",
+                "mode": mode,
+                "target_date": target_date,
+                "age_in_years": round(age_in_years, 2),
+                "arc_degrees": round(arc_degrees, 4),
+                "max_orb": orb,
+                "target": natal_inp.name
+            },
+            "natal_chart": {
+                "planets": natal_planets,
+                "houses": natal_houses
+            },
+            "directed_chart": directed_chart,
+            "aspects": dir_aspects
         }

@@ -72,6 +72,7 @@ class ElectionalRequest(BaseModel):
     lat: float
     lon: float
     tz: str
+    category: Optional[str] = Field("business", description="Категория подбора даты")
 
 class RelocationRequest(NatalChartRequest):
     target_lat: float
@@ -90,3 +91,9 @@ class ContentHoroscopeRequest(BaseModel):
     sign: str = Field(..., description="Короткое имя знака (Ari, Tau, Gem, Can, Leo, Vir, Lib, Sco, Sag, Cap, Aqu, Pis)")
     start_date: str = Field(..., description="Начало периода прогноза (YYYY-MM-DD)")
     end_date: str = Field(..., description="Конец периода прогноза (YYYY-MM-DD)")
+
+class DirectionsRequest(BaseModel):
+    person: NatalChartRequest = Field(..., description="Данные рождения")
+    target_date: str = Field(..., description="Целевая дата прогноза в формате YYYY-MM-DD")
+    mode: Optional[str] = Field("symbolic", description="Режим: 'symbolic' (1° = 1 год) или 'solar_arc'")
+    orb: Optional[float] = Field(1.0, description="Максимальный орбис в градусах (стандарт 1.0°)")
