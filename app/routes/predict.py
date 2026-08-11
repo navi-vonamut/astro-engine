@@ -47,6 +47,17 @@ class MonthlyOverviewRequest(BaseModel):
     month: int
 
 
+# 🔥 ДОБАВЛЯЕМ СХЕМУ ДЛЯ ГОДОВОЙ ДИАГРАММЫ ГАНТА
+class AnnualGanttRequest(BaseModel):
+    name: str = "User"
+    date: str
+    time: str
+    tz: str
+    lat: float
+    lon: float
+    year: int
+    node_type: str = "true"
+
 # --- РОУТЫ ---
 
 @router.post("/daily")
@@ -114,4 +125,20 @@ async def get_monthly_overview(request: MonthlyOverviewRequest, api_key: str = D
     # Вызываем метод monthly_overview из движка
     result = _engine.monthly_overview(natal_inp=natal, year=request.year, month=request.month)
     
+    return result
+
+# 🔥 ДОБАВЛЯЕМ РОУТ ГОДОВОЙ ДИАГРАММЫ ГАНТА
+@router.post("/gantt")
+async def get_annual_gantt(request: AnnualGanttRequest, api_key: str = Depends(verify_internal_api_key)) -> Dict[str, Any]:
+    natal = BirthInput(
+        name=request.name,
+        date=request.date,
+        time=request.time,
+        tz=request.tz,
+        lat=request.lat,
+        lon=request.lon,
+        node_type=request.node_type
+    )
+
+    result = _engine.annual_gantt_transits(natal_inp=natal, year=request.year)
     return result

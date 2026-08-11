@@ -97,3 +97,26 @@ class DirectionsRequest(BaseModel):
     target_date: str = Field(..., description="Целевая дата прогноза в формате YYYY-MM-DD")
     mode: Optional[str] = Field("symbolic", description="Режим: 'symbolic' (1° = 1 год) или 'solar_arc'")
     orb: Optional[float] = Field(1.0, description="Максимальный орбис в градусах (стандарт 1.0°)")
+
+class LifeEvent(BaseModel):
+    target_date: str = Field(..., description="Target date of the event in YYYY-MM-DD format (fallback to English)")
+    event_type: str = Field(..., description="Type of the event, e.g., 'marriage', 'childbirth' (fallback to English)")
+    weight: float = Field(1.0, description="Weight or importance multiplier of the event, default is 1.0 (fallback to English)")
+
+class RectificationRequest(BaseModel):
+    person: NatalChartRequest = Field(..., description="Base natal data. Time is ignored as it will be calculated (fallback to English)")
+    events: List[LifeEvent] = Field(..., description="List of significant life events for matching (fallback to English)")
+    mode: Optional[str] = Field("symbolic", description="Direction mode, 'symbolic' by default (fallback to English)")
+    max_orb: Optional[float] = Field(0.5, description="Maximum allowed orb for aspect matching")
+    start_time: Optional[str] = Field("00:00", description="Start of search window HH:MM")
+    end_time: Optional[str] = Field("23:59", description="End of search window HH:MM")
+    ai_signatures: Optional[dict] = Field(None, description="AI-generated event signatures (optional)")
+
+
+class SearchBestCitiesRequest(BaseModel):
+    person: NatalChartRequest = Field(..., description="Базовые данные натальной карты")
+    goal_key: Optional[str] = Field("career_and_business", description="Ключ цели (love_and_marriage, career_and_business, relocation_and_home, education_and_spirituality, health_and_vitality, wealth_and_money)")
+    top_n: Optional[int] = Field(5, description="Количество лучших городов")
+    country_codes: Optional[List[str]] = Field(None, description="Список ISO кодов стран для фильтрации (например ['RU', 'US'])")
+
+

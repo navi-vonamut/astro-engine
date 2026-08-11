@@ -1,5 +1,7 @@
 import swisseph as swe
 import math
+import os
+import requests
 import numpy as np
 from typing import Dict, Any
 
@@ -9,8 +11,9 @@ from app.engine.core.utils import measure_time, get_utc_jd_from_input, tz_to_pyt
 from app.engine.core.constants import SWISSEPH_OBJECTS
 from app.engine.core.geo_math import (
     to_dms, normalize_lon, generate_geodesic_path, 
-    calculate_bearing, interpolate_dateline
+    calculate_bearing, interpolate_dateline, destination_point
 )
+from app.engine.analyzers.astro_goals_matrix import get_goal_profile
 
 class GeoAstroEngine:
 
@@ -155,19 +158,35 @@ class GeoAstroEngine:
     # 3. COMBINED SCORING 
     # ==========================================
     @measure_time
-    def calculate_city_scores_combined(self, acg_data, ls_data, cities, birth_lat, birth_lon):
+    def calculate_city_scores_combined(self, acg_data, ls_data, cities, birth_lat, birth_lon, goal_key: str = None):
         MAX_ORB_KM = 700.0; R_EARTH = 6371.0; LS_ORB_DEGREES = 3.0 
         
+        # --- НОВАЯ ЛОГИКА: Получаем целевые планеты ---
+        target_planets = None
+        target_angles = None
+        if goal_key:
+            profile = get_goal_profile(goal_key)
+            target_planets = profile.get("target_planets", [])
+            target_angles = profile.get("target_angles", [])
+
         line_points, meta_store, line_meta_indices = [], [], []
         for planet, data in acg_data.items():
+            # --- ФИЛЬТР ПО ПЛАНЕТЕ ---
+            if target_planets and planet not in target_planets:
+                continue
+
             for angle in ['MC', 'IC', 'ASC', 'DSC', 'Zenith']:
                 if angle == 'Zenith':
                      if data.get('Zenith'):
-                        line_points.append(data['Zenith']); meta_store.append({'planet': planet, 'angle': 'Zenith', 'type': 'zenith'}); line_meta_indices.append(len(meta_store)-1)
+                        line_points.append(data['Zenith'])
+                        meta_store.append({'planet': planet, 'angle': 'Zenith', 'type': 'zenith'})
+                        line_meta_indices.append(len(meta_store)-1)
                 else:
                     for segment in data.get(angle, []):
                         for pt in segment:
-                            line_points.append(pt); meta_store.append({'planet': planet, 'angle': angle, 'type': 'line'}); line_meta_indices.append(len(meta_store)-1)
+                            line_points.append(pt)
+                            meta_store.append({'planet': planet, 'angle': angle, 'type': 'line'})
+                            line_meta_indices.append(len(meta_store)-1)
 
         if not cities: return []
         city_coords = np.array([[c['lat'], c['lon']] for c in cities], dtype=np.float32)
@@ -179,22 +198,47 @@ class GeoAstroEngine:
             line_rads = np.radians(line_points_arr)
             lat1, lon1 = city_rads[:, 0:1], city_rads[:, 1:2]
             lat2, lon2 = line_rads[:, 0], line_rads[:, 1]
-            dlat, dlon = lat2 - lat1, lon2 - lon1
-            a = np.sin(dlat/2.0)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2.0)**2
-            c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - np.clip(a, 0, 1)))
-            distances_km = R_EARTH * c 
-            valid_indices = np.where(distances_km <= MAX_ORB_KM)
-            for city_idx, point_idx in zip(valid_indices[0], valid_indices[1]):
-                dist = float(distances_km[city_idx, point_idx])
-                meta = meta_store[line_meta_indices[point_idx]]
-                max_score = 150 if meta['type'] == 'zenith' else 100
-                score_val = max_score * (1 - (dist / MAX_ORB_KM))
-                aspect = {"planet": meta['planet'], "angle": meta['angle'], "distance_km": int(dist), "score": int(score_val), "type": meta['type']}
-                if city_idx not in acg_results: acg_results[city_idx] = []
-                existing = next((x for x in acg_results[city_idx] if x['planet'] == aspect['planet'] and x['angle'] == aspect['angle']), None)
-                if existing:
-                    if aspect['score'] > existing['score']: existing['distance_km'] = aspect['distance_km']; existing['score'] = aspect['score']
-                else: acg_results[city_idx].append(aspect)
+            
+            # 🔥 ВЕКТОРНАЯ ОПТИМИЗАЦИЯ: Предотбор по широте перед тяжелой тригонометрией Haversine
+            abs_dlat = np.abs(lat2 - lat1)
+            candidate_mask = abs_dlat <= 0.1134 # ~6.5 градусов по широте (~720 км)
+            valid_city_idx, valid_point_idx = np.where(candidate_mask)
+
+            if len(valid_city_idx) > 0:
+                clat1 = city_rads[valid_city_idx, 0]
+                clon1 = city_rads[valid_city_idx, 1]
+                llat2 = line_rads[valid_point_idx, 0]
+                llon2 = line_rads[valid_point_idx, 1]
+
+                cdlat = llat2 - clat1
+                cdlon = llon2 - clon1
+
+                a = np.sin(cdlat / 2.0)**2 + np.cos(clat1) * np.cos(llat2) * np.sin(cdlon / 2.0)**2
+                c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - np.clip(a, 0, 1)))
+                distances_km = R_EARTH * c
+                
+                within_orb = np.where(distances_km <= MAX_ORB_KM)[0]
+                for idx in within_orb:
+                    city_idx = valid_city_idx[idx]
+                    point_idx = valid_point_idx[idx]
+                    dist = float(distances_km[idx])
+                    meta = meta_store[line_meta_indices[point_idx]]
+                    
+                    # --- Бонус за целевые углы ---
+                    max_score = 150 if meta['type'] == 'zenith' else 100
+                    if target_angles and meta['angle'] in target_angles:
+                        max_score *= 1.5
+
+                    score_val = max_score * (1 - (dist / MAX_ORB_KM))
+                    aspect = {"planet": meta['planet'], "angle": meta['angle'], "distance_km": int(dist), "score": int(score_val), "type": meta['type']}
+                    
+                    if city_idx not in acg_results: acg_results[city_idx] = []
+                    existing = next((x for x in acg_results[city_idx] if x['planet'] == aspect['planet'] and x['angle'] == aspect['angle']), None)
+                    if existing:
+                        if aspect['score'] > existing['score']: 
+                            existing['distance_km'] = aspect['distance_km']
+                            existing['score'] = aspect['score']
+                    else: acg_results[city_idx].append(aspect)
 
         final_cities = []
         for i, city in enumerate(cities):
@@ -203,6 +247,10 @@ class GeoAstroEngine:
             ls_aspects = []
             if ls_data:
                 for planet, p_data in ls_data.items():
+                    # --- ФИЛЬТР ПО ПЛАНЕТЕ ДЛЯ LOCAL SPACE ---
+                    if target_planets and planet not in target_planets:
+                        continue
+
                     planet_az = p_data['azimuth']
                     
                     diff_fwd = abs(bearing_to_city - planet_az)
@@ -219,13 +267,28 @@ class GeoAstroEngine:
                         score = 50 * (1 - diff_rev/LS_ORB_DEGREES)
                         ls_aspects.append({"planet": planet, "angle": "Local Space (Оппозиция)", "distance_km": 0, "score": int(score), "type": "ls"})
             
-            has_acg = len(current_aspects) > 0; has_ls = len(ls_aspects) > 0; is_crossing = has_acg and has_ls
+            has_acg = len(current_aspects) > 0
+            has_ls = len(ls_aspects) > 0
+            is_crossing = has_acg and has_ls
+            
             all_aspects = current_aspects + ls_aspects
             all_aspects.sort(key=lambda x: x['score'], reverse=True)
+            
             if all_aspects:
-                c_copy = city.copy(); c_copy['aspects'] = all_aspects; c_copy['is_crossing'] = is_crossing
+                # --- Считаем общий балл для города ---
+                total_city_score = sum(asp['score'] for asp in all_aspects)
+                # Даем бонус городу, если там пересекаются линии ACG и Local Space
+                if is_crossing:
+                     total_city_score = int(total_city_score * 1.2)
+
+                c_copy = city.copy()
+                c_copy['aspects'] = all_aspects
+                c_copy['is_crossing'] = is_crossing
+                c_copy['total_score'] = total_city_score # Добавляем общий балл для сортировки
                 final_cities.append(c_copy)
                 
+        # --- Сортируем города по убыванию общего балла ---
+        final_cities.sort(key=lambda x: x.get('total_score', 0), reverse=True)
         return final_cities
 
     def get_relocation_raw_data(self, inp: BirthInput, target_lat: float, target_lon: float, city_name: str) -> Dict[str, Any]:

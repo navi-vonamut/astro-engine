@@ -4,12 +4,15 @@ from typing import List
 from app.deps import verify_internal_api_key
 from app.engine.core.models import BirthInput
 from app.engine.geo_engine import GeoAstroEngine
+from app.engine.kerykeion_engine import KerykeionEngine
 from app.geo.cities import get_major_cities  # Нужен для Astrocartography-Full
 
 from app.schemas import (
     NatalChartRequest, RelocationRequest, 
-    BulkRelocationRequest, CheckPointRequest
+    BulkRelocationRequest, CheckPointRequest,
+    SearchBestCitiesRequest
 )
+
 
 router = APIRouter(
     prefix="/geo",
@@ -138,3 +141,25 @@ async def local_space_chart_route(req: NatalChartRequest, api_key: str = Depends
         return {"status": "success", "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =================================================================
+# 7. ПОИСК ЛУЧШИХ ГОРОДОВ ДЛЯ РЕЛОКАЦИИ ПО ЦЕЛЯМ
+# =================================================================
+@router.post("/search-best-cities")
+async def search_best_cities_route(req: SearchBestCitiesRequest, api_key: str = Depends(verify_internal_api_key)):
+    """Ищет лучшие города для релокации с учетом целей пользователя и Safety Check"""
+    try:
+        inp = to_birth_input(req.person)
+        engine = KerykeionEngine()
+        result = engine.search_best_cities(
+            natal_inp=inp,
+            goal_key=req.goal_key or "career_and_business",
+            top_n=req.top_n or 5,
+            country_codes=req.country_codes
+        )
+        return {"status": "success", "data": result}
+    except Exception as e:
+        print(f"❌ ERROR in /geo/search-best-cities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

@@ -22,6 +22,7 @@ from app.engine.calculators.progression_calc import calculate_progressed_input
 from app.engine.calculators.directions_calc import (
     calculate_direction_arc, calculate_directed_chart, calculate_directional_aspects
 )
+from app.engine.calculators.rectification_calc import calculate_rectification
 from app.engine.calculators.electional_calc import generate_daily_inputs, analyze_electional_day
 from app.engine.calculators.aspects_calc import calculate_natal_aspects
 from app.engine.analyzers.scoring import get_compensatory_data
@@ -136,11 +137,11 @@ class KerykeionEngine:
         return "retrograde_separating" if t_speed < 0 else "separating" # Расходится
 
     # === ГЛАВНЫЙ МЕТОД СОЛЯРА ===
-    def solar_return(self, natal_inp: BirthInput, year: int, loc_lat: float, loc_lon: float, loc_tz: str) -> Dict[str, Any]:
-        print(f"\n[ENGINE] Соляр для {natal_inp.name}. Год: {year}. Локация: {loc_lat}, {loc_lon}")
+    def solar_return(self, natal_inp: BirthInput, year: int, loc_lat: float, loc_lon: float, loc_tz: str, precession_corrected: bool = False) -> Dict[str, Any]:
+        print(f"\n[ENGINE] Соляр для {natal_inp.name}. Год: {year}. Локация: {loc_lat}, {loc_lon}. Прецессия: {precession_corrected}")
         
         # 1. Получаем точную дату и время соляра
-        solar_input = calculate_solar_return_input(natal_inp, year, loc_lat, loc_lon, loc_tz)
+        solar_input = calculate_solar_return_input(natal_inp, year, loc_lat, loc_lon, loc_tz, precession_corrected)
         print(f"[ENGINE] Дата Соляра (Local): {solar_input.date} {solar_input.time}")
         
         # 2. Строим карту Соляра
@@ -160,6 +161,8 @@ class KerykeionEngine:
         solar_chart["meta"]["type"] = "solar_return"
         solar_chart["meta"]["solar_year"] = year
         solar_chart["meta"]["location_name"] = f"{loc_lat}, {loc_lon}" 
+        solar_chart["meta"]["birth_date"] = str(natal_inp.date)
+        solar_chart["meta"]["name"] = natal_inp.name
         
         # Достаем самое важное для ИИ - где находится Солярный Асцендент в Натале
         solar_asc_overlay = next((o for o in solar_in_natal_houses if o["planet"] == "Ascendant"), None)
@@ -167,11 +170,14 @@ class KerykeionEngine:
             solar_chart["meta"]["solar_asc_in_natal_house"] = solar_asc_overlay["in_partner_house"]
             solar_chart["meta"]["solar_asc_in_natal_sign"] = solar_asc_overlay["partner_house_sign"]
 
-        # 5. Добавляем блок наложений в ответ
+        # 5. Добавляем блок наложений и натальную карту в ответ
+        solar_chart["natal_chart"] = natal_chart
         solar_chart["overlays"] = {
             "solar_planets_in_natal_houses": solar_in_natal_houses,
             "solar_to_natal_aspects": solar_to_natal_aspects
         }
+        
+        solar_chart["meta"]["is_precession_corrected"] = precession_corrected
         
         return solar_chart
     
@@ -730,6 +736,130 @@ class KerykeionEngine:
             "ephemeris": ephemeris_data
         }
 
+    # === ГЛАВНЫЙ МЕТОД ГОДОВОЙ ДИАГРАММЫ ГАНТА ТРАНЗИТОВ ===
+    def annual_gantt_transits(self, natal_inp: BirthInput, year: int) -> Dict[str, Any]:
+        import datetime
+        from datetime import timedelta
+        from app.engine.core.utils import get_house_for_degree
+
+        print(f"\n[ENGINE START] Annual Gantt Transits for {natal_inp.name} - Year {year}")
+        natal_data = self.natal(natal_inp)
+        natal_houses = natal_data["houses"]
+        natal_planets = {p["name"]: p for p in natal_data["planets"]}
+
+        ASPECT_DEFS = {
+            "Conjunction": {"angle": 0, "orb": 4.0, "category": "major", "type": "conjunction"},
+            "Opposition": {"angle": 180, "orb": 4.0, "category": "major", "type": "tense"},
+            "Square": {"angle": 90, "orb": 3.5, "category": "major", "type": "tense"},
+            "Trine": {"angle": 120, "orb": 3.5, "category": "major", "type": "harmonious"},
+            "Sextile": {"angle": 60, "orb": 3.0, "category": "major", "type": "harmonious"},
+            "Quincunx": {"angle": 150, "orb": 2.0, "category": "minor", "type": "tense"},
+            "Semisquare": {"angle": 45, "orb": 1.5, "category": "minor", "type": "tense"},
+            "Sesquiquadrate": {"angle": 135, "orb": 1.5, "category": "minor", "type": "tense"},
+            "Semisextile": {"angle": 30, "orb": 1.5, "category": "minor", "type": "harmonious"},
+            "Quintile": {"angle": 72, "orb": 1.5, "category": "minor", "type": "harmonious"},
+            "Biquintile": {"angle": 144, "orb": 1.5, "category": "minor", "type": "harmonious"},
+        }
+
+        node_key = "True_North_Lunar_Node" if natal_inp.node_type == "true" else "Mean_North_Lunar_Node"
+        transit_planet_keys = [
+            "Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", 
+            "Uranus", "Neptune", "Pluto", node_key, "Mean_Lilith", "Chiron"
+        ]
+
+        start_date = datetime.date(year, 1, 1)
+        end_date = datetime.date(year, 12, 31)
+
+        aspect_daily_records = {}
+
+        curr_dt = start_date
+        while curr_dt <= end_date:
+            date_str = curr_dt.strftime("%Y-%m-%d")
+            jd = swe.julday(curr_dt.year, curr_dt.month, curr_dt.day, 12.0)
+
+            for t_name in transit_planet_keys:
+                swe_id = SWISSEPH_OBJECTS.get(t_name)
+                if swe_id is None:
+                    continue
+
+                res, _ = swe.calc_ut(jd, swe_id)
+                t_pos = res[0] % 360.0
+                is_retro = res[3] < 0
+
+                for n_name, n_p in natal_planets.items():
+                    for asp_name, asp_info in ASPECT_DEFS.items():
+                        diff = abs(t_pos - n_p["abs_pos"])
+                        if diff > 180:
+                            diff = 360 - diff
+
+                        orb = abs(diff - asp_info["angle"])
+                        if orb <= asp_info["orb"]:
+                            key = (t_name, n_name, asp_name)
+                            if key not in aspect_daily_records:
+                                aspect_daily_records[key] = []
+                            house = get_house_for_degree(t_pos, natal_houses)
+                            aspect_daily_records[key].append({
+                                "date": date_str,
+                                "orb": round(orb, 2),
+                                "is_retro": is_retro,
+                                "house": house
+                            })
+            curr_dt += timedelta(days=1)
+
+        gantt_items = []
+        item_id_counter = 1
+
+        for (t_name, n_name, asp_name), days_data in aspect_daily_records.items():
+            if not days_data:
+                continue
+
+            asp_info = ASPECT_DEFS[asp_name]
+            
+            segments = []
+            curr_segment = [days_data[0]]
+
+            for i in range(1, len(days_data)):
+                prev_d = datetime.datetime.strptime(days_data[i-1]["date"], "%Y-%m-%d").date()
+                curr_d = datetime.datetime.strptime(days_data[i]["date"], "%Y-%m-%d").date()
+                if (curr_d - prev_d).days <= 3:
+                    curr_segment.append(days_data[i])
+                else:
+                    segments.append(curr_segment)
+                    curr_segment = [days_data[i]]
+            if curr_segment:
+                segments.append(curr_segment)
+
+            for seg in segments:
+                start_d = seg[0]["date"]
+                end_d = seg[-1]["date"]
+                peak_entry = min(seg, key=lambda x: x["orb"])
+                peak_d = peak_entry["date"]
+                min_orb = peak_entry["orb"]
+                house = peak_entry["house"]
+                any_retro = any(x["is_retro"] for x in seg)
+
+                gantt_items.append({
+                    "id": f"gantt_{item_id_counter}",
+                    "transit_planet": t_name,
+                    "natal_planet": n_name,
+                    "aspect": asp_name,
+                    "aspect_category": asp_info["category"],
+                    "aspect_type": asp_info["type"],
+                    "start_date": start_d,
+                    "peak_date": peak_d,
+                    "end_date": end_d,
+                    "min_orb": min_orb,
+                    "house": house,
+                    "is_retro": any_retro
+                })
+                item_id_counter += 1
+
+        return {
+            "meta": {"type": "annual_gantt", "year": year, "target": natal_inp.name},
+            "year": year,
+            "items": gantt_items
+        }
+
     # === ГЛАВНЫЙ МЕТОД ХОРАРА ===
     def horary(self, inp: BirthInput, question: str) -> Dict[str, Any]:
         chart = self.natal(inp)
@@ -958,4 +1088,152 @@ class KerykeionEngine:
             },
             "directed_chart": directed_chart,
             "aspects": dir_aspects
+        }
+
+# === ГЛАВНЫЙ МЕТОД РЕКТИФИКАЦИИ ===
+    def rectify(
+        self, 
+        natal_inp: BirthInput, 
+        events: List[Dict[str, Any]], 
+        mode: str = "symbolic", 
+        max_orb: float = 1.0,
+        start_time: str = "00:00", # 🔥 Принимаем начало окна
+        end_time: str = "23:59"     # 🔥 Принимаем конец окна
+    ) -> Dict[str, Any]:
+        print(f"\n[ENGINE START] Auto-Rectification for {natal_inp.name} (Window: {start_time} - {end_time})")
+
+        noon_inp = BirthInput(
+            name=natal_inp.name,
+            date=natal_inp.date,
+            time="12:00:00",
+            tz=natal_inp.tz,
+            lat=natal_inp.lat,
+            lon=natal_inp.lon,
+            house_system=natal_inp.house_system,
+            node_type=natal_inp.node_type
+        )
+        base_chart = self.natal(noon_inp, lite=True)
+        natal_planets = base_chart["planets"]
+        natal_houses  = base_chart["houses"]
+
+        return calculate_rectification(
+            natal_inp=natal_inp,
+            natal_planets=natal_planets,
+            natal_houses=natal_houses,
+            events=events,
+            mode=mode,
+            max_orb=max_orb,
+            start_time=start_time, # 🔥 Прокидываем в калькулятор
+            end_time=end_time      # 🔥 Прокидываем в калькулятор
+        )
+
+    # === ГЛАВНЫЙ МЕТОД ПОИСКА ЛУЧШИХ ГОРОДОВ (ASTRO-RELOCATION) ===
+    def search_best_cities(self, natal_inp: BirthInput, goal_key: str = "career_and_business", top_n: int = 5, country_codes: Optional[List[str]] = None) -> Dict[str, Any]:
+        import os
+        import json
+        from app.engine.analyzers.astro_goals_matrix import get_goal_profile
+        from app.engine.geo_engine import GeoAstroEngine
+        
+        print(f"\n[ENGINE START] Search Best Cities for {natal_inp.name} | Goal: {goal_key} | Countries: {country_codes}")
+        
+        # 1. Получаем профиль цели из матрицы
+        profile = get_goal_profile(goal_key)
+        target_planets = profile.get("target_planets", [])
+        malefics = profile.get("avoid_hard_aspects_from", [])
+        
+        # 2. Строим полную натальную карту (lite=False, чтобы получить аспекты)
+        natal_chart = self.natal(natal_inp, lite=False)
+        natal_aspects = natal_chart.get("aspects", [])
+        
+        # 3. SAFETY CHECK: Ищем пораженные целевые планеты в натале
+        afflicted_planets = set()
+        safety_warnings = []
+        
+        for asp in natal_aspects:
+            if asp["type"] in ["square", "opposition"]:  # Нас волнуют только жесткие аспекты
+                p1, p2 = asp["p1"], asp["p2"]
+                # Если целевая планета поражена малефиком из списка avoid_hard_aspects_from
+                if p1 in target_planets and p2 in malefics:
+                    afflicted_planets.add(p1)
+                    safety_warnings.append(f"Planet {p1} is afflicted by {p2} ({asp['type']}). Lines of {p1} are considered risky and excluded from scoring.")
+                elif p2 in target_planets and p1 in malefics:
+                    afflicted_planets.add(p2)
+                    safety_warnings.append(f"Planet {p2} is afflicted by {p1} ({asp['type']}). Lines of {p2} are considered risky and excluded from scoring.")
+                    
+        # 4. Загружаем базу городов (используя кэшированный модуль app.geo.cities)
+        from app.geo.cities import get_major_cities
+        cities = get_major_cities()
+        if not cities:
+            print("[ENGINE ERROR] Failed to load major_cities from app.geo.cities")
+            return {"error": "Cities database not found"}
+
+            
+        # 🔥 НОВОЕ: Фильтрация по странам (ускоряет работу в десятки раз)
+        if country_codes:
+            # Переводим в верхний регистр для надежности
+            upper_codes = [code.upper() for code in country_codes]
+            cities = [c for c in cities if c.get("country") in upper_codes]
+            
+            if not cities:
+                return {
+                    "meta": {
+                        "type": "best_cities_search",
+                        "error": "No cities found in the specified countries."
+                    },
+                    "top_cities": []
+                }
+        
+        # 5. Генерируем сырые линии ACG и LS через гео-движок
+        geo_engine = GeoAstroEngine()
+        acg_data = geo_engine.get_astrocartography_lines(natal_inp)
+        ls_data = geo_engine.get_local_space_lines(natal_inp)
+        
+        # 6. Вызываем первичный скоринг из geo_engine
+        raw_cities = geo_engine.calculate_city_scores_combined(
+            acg_data=acg_data, 
+            ls_data=ls_data, 
+            cities=cities, 
+            birth_lat=float(natal_inp.lat), 
+            birth_lon=float(natal_inp.lon), 
+            goal_key=goal_key
+        )
+        
+        # 7. Применяем Safety Check: фильтруем аспекты пораженных планет и пересчитываем баллы
+        safe_cities = []
+        for city in raw_cities:
+            safe_aspects = [asp for asp in city.get("aspects", []) if asp["planet"] not in afflicted_planets]
+            
+            if not safe_aspects:
+                continue 
+                
+            new_total_score = sum(asp["score"] for asp in safe_aspects)
+            
+            has_acg = any(a["type"] != "ls" for a in safe_aspects)
+            has_ls = any(a["type"] == "ls" for a in safe_aspects)
+            is_crossing = has_acg and has_ls
+            
+            if is_crossing:
+                new_total_score = int(new_total_score * 1.2)
+                
+            city["aspects"] = safe_aspects
+            city["total_score"] = new_total_score
+            city["is_crossing"] = is_crossing
+            
+            if new_total_score > 0:
+                safe_cities.append(city)
+                
+        # 8. Сортируем города по убыванию нового чистого балла и берем Топ-N
+        safe_cities.sort(key=lambda x: x.get("total_score", 0), reverse=True)
+        top_cities = safe_cities[:top_n]
+        
+        return {
+            "meta": {
+                "type": "best_cities_search",
+                "goal_key": goal_key,
+                "goal_name": profile.get("name", ""),
+                "target_person": natal_inp.name,
+                "safety_warnings": safety_warnings,
+                "country_filters": country_codes
+            },
+            "top_cities": top_cities
         }

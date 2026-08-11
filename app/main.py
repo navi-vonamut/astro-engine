@@ -14,6 +14,7 @@ from .routes.composite import router as composite_router
 from .routes.electional import router as electional_router
 from .routes.content import router as content_router
 from .routes.directions import router as directions_router
+from .routes.rectification import router as rectification_router
 
 app = FastAPI(title="astro-engine", version="0.2.0")
 
@@ -37,3 +38,4 @@ app.include_router(composite_router)
 app.include_router(electional_router)
 app.include_router(content_router)
 app.include_router(directions_router)
+app.include_router(rectification_router)
