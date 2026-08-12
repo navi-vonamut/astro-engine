@@ -32,6 +32,8 @@ async def natal_web(request: NatalChartRequest, api_key: str = Depends(verify_in
     client_name = getattr(request, "name", "User") 
     h_sys = getattr(request, "house_system", "P")
     n_type = getattr(request, "node_type", "true") 
+    c_sys = getattr(request, "coord_system", "") or ""
+    c_orbs = getattr(request, "custom_orbs", None)
 
     inp = BirthInput(
         name=client_name,
@@ -41,7 +43,9 @@ async def natal_web(request: NatalChartRequest, api_key: str = Depends(verify_in
         lat=request.lat,
         lon=request.lon,
         house_system=h_sys,
-        node_type=n_type
+        node_type=n_type,
+        coord_system=c_sys,
+        custom_orbs=c_orbs
     )
     
     # Теперь мы возвращаем ТОЛЬКО данные, без тяжелого SVG

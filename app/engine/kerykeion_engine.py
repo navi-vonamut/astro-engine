@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
+import math
 
 from kerykeion import AstrologicalSubjectFactory
 from kerykeion.chart_data_factory import ChartDataFactory
@@ -394,12 +395,20 @@ class KerykeionEngine:
             "houses": houses_list
         }
 
+        # 🔥 ПРИМЕНЯЕМ СИСТЕМУ КООРДИНАТ / АЙАНАМШУ (Tropical, Sidereal, RA, Draconic, Spring Equinox)
+        if inp.coord_system:
+            self._apply_coord_system(planets_list, houses_list, subject, inp.coord_system)
+
+        # 🔥 АСПЕКТЫ И ПЛАНЕТНЫЙ ПАРСИНГ
+        chart_dump["planets"] = planets_list
+        chart_dump["houses"] = houses_list
+
         # 🔥 ВЫХОДИМ, ЕСЛИ НУЖЕН ТОЛЬКО LITE
         if lite:
             return res
 
         # === ТЯЖЕЛЫЕ АНАЛИЗАТОРЫ (выполняются только для полной натальной карты) ===
-        clean_aspects = calculate_natal_aspects(planets_list, subject.julian_day)
+        clean_aspects = calculate_natal_aspects(planets_list, subject.julian_day, custom_orbs=getattr(inp, "custom_orbs", None))
         
         res.update({
             "aspects": clean_aspects,
@@ -415,6 +424,92 @@ class KerykeionEngine:
         })
         
         return res
+
+    def _apply_coord_system(self, planets_list: List[Dict[str, Any]], houses_list: List[Dict[str, Any]], subject, coord_system: str):
+        if not coord_system or coord_system == "tropical":
+            return
+
+        shift = 0.0
+        is_ra = (coord_system == "ra")
+
+        SWISSEPH_AYANAMSAS = {
+            "fagan": getattr(swe, "SIDM_FAGAN_BRADLEY", 0),
+            "lahiri": getattr(swe, "SIDM_LAHIRI", 1),
+            "deluce": getattr(swe, "SIDM_DELUCE", 2),
+            "raman": getattr(swe, "SIDM_RAMAN", 3),
+            "ushashashi": getattr(swe, "SIDM_USHASHASHI", 4),
+            "krishnamurti": getattr(swe, "SIDM_KRISHNAMURTI", 5),
+            "djwhalkhul": getattr(swe, "SIDM_DJWHAL_KHUL", 6),
+            "yukteshwar": getattr(swe, "SIDM_YUKTESHWAR", 7),
+            "jnbhasin": getattr(swe, "SIDM_JN_BHASIN", 8),
+            "takra": getattr(swe, "SIDM_BABYL_KUGLER1", 9),
+            "hipparchos": getattr(swe, "SIDM_HIPPARCHOS", 15),
+            "sassanian": getattr(swe, "SIDM_SASSANIAN", 16),
+            "j2000": getattr(swe, "SIDM_J2000", 18),
+            "j1900": getattr(swe, "SIDM_J1900", 19),
+            "b1950": getattr(swe, "SIDM_B1950", 20),
+            "citra": getattr(swe, "SIDM_TRUE_CITRA", 27),
+            "revati": getattr(swe, "SIDM_TRUE_REVATI", 28),
+            "pushya": getattr(swe, "SIDM_TRUE_PUSHIA", 29),
+            "galactic_cmid": getattr(swe, "SIDM_GALCENT_MULA_WILHELM", 30),
+            "galactic_ccap": getattr(swe, "SIDM_GALCENT_COCHRANE", 31),
+            "galactic_iau": getattr(swe, "SIDM_GALEQ_IAU1958", 32),
+            "mula": getattr(swe, "SIDM_TRUE_MULA", 35),
+            "galactic0": getattr(swe, "SIDM_GALCENT_0SAG", 36),
+            "valens": getattr(swe, "SIDM_VALENS_MOON", 37),
+            "aldebaran": getattr(swe, "SIDM_ALDEBARAN_15TAU", 14),
+            "larry": getattr(swe, "SIDM_LAHIRI", 1),
+            "galactic_cgil": getattr(swe, "SIDM_GALCENT_0SAG", 36),
+            "galactic_eq": getattr(swe, "SIDM_GALEQ_IAU1958", 32),
+            "galactic": getattr(swe, "SIDM_GALCENT_0SAG", 36),
+            "galactic_fio": getattr(swe, "SIDM_GALCENT_0SAG", 36),
+            "galactic_mid": getattr(swe, "SIDM_GALCENT_MULA_WILHELM", 30),
+        }
+
+        if coord_system == "draconic":
+            node = next((p for p in planets_list if p["name"] in ["True_North_Lunar_Node", "Mean_North_Lunar_Node"]), None)
+            if node:
+                shift = node["abs_pos"]
+        elif coord_system.startswith("vlastni_"):
+            try:
+                deg_offset = float(coord_system.replace("vlastni_", ""))
+                shift = deg_offset
+            except Exception:
+                shift = 0.0
+        elif coord_system in SWISSEPH_AYANAMSAS:
+            sid_mode = SWISSEPH_AYANAMSAS[coord_system]
+            try:
+                swe.set_sid_mode(sid_mode)
+                shift = swe.get_ayanamsa_ut(subject.julian_day)
+            except Exception as e:
+                print(f"[ENGINE ERROR] SwissEphem ayanamsa error: {e}")
+                shift = 24.13
+
+        eps_rad = (23.439 * math.pi) / 180.0
+
+        def transform_pos(orig_pos: float) -> float:
+            if is_ra:
+                rad = (orig_pos * math.pi) / 180.0
+                y = math.sin(rad) * math.cos(eps_rad)
+                x = math.cos(rad)
+                ra_deg = (math.atan2(y, x) * 180.0) / math.pi
+                return (ra_deg % 360 + 360) % 360
+            else:
+                return (orig_pos - shift + 360) % 360
+
+        for p in planets_list:
+            new_pos = transform_pos(p["abs_pos"])
+            p["abs_pos"] = new_pos
+            p["sign_id"] = int(new_pos // 30) % 12
+            p["sign"] = SIGNS_SHORT[p["sign_id"]]
+            p["degree"] = new_pos % 30
+
+        for h in houses_list:
+            new_pos = transform_pos(h["abs_pos"])
+            h["abs_pos"] = new_pos
+            h["sign_id"] = int(new_pos // 30) % 12
+            h["sign"] = SIGNS_SHORT[h["sign_id"]]
+            h["degree"] = new_pos % 30
 
 # === ГЛАВНЫЙ МЕТОД ТРАНЗИТОВ ===
     def transits(self, natal_inp: BirthInput, transit_date: str, extra_house_grids: Optional[Dict[str, List[Dict]]] = None) -> Dict[str, Any]:

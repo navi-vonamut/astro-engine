@@ -22,6 +22,13 @@ from app.engine.core.utils import parse_ymd, tz_to_pytz
 from app.engine.core.constants import SIGNS_SHORT
 
 
+def lon_to_sign(lon: float) -> str:
+    SIGNS = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
+    idx = int((lon % 360.0) // 30)
+    deg = int((lon % 360.0) % 30)
+    return f"{SIGNS[idx]} {deg}°"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Управители знаков (классическая + современная система)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,17 +427,29 @@ def calculate_rectification(
 
         if total_score > 0:
             minute_scores.append({
-                "time":         grid["time"],
-                "Ascendant":    round(grid["Ascendant"], 4),
-                "Medium_Coeli": round(grid["Medium_Coeli"], 4),
-                "Descendant":   round(grid["Descendant"], 4),
-                "Imum_Coeli":   round(grid["Imum_Coeli"], 4),
-                "total_score":  round(total_score, 4),
-                "had_key_hit":  had_key_hit,
-                "matches":      all_matches,
+                "time":            grid["time"],
+                "Ascendant":       round(grid["Ascendant"], 4),
+                "Medium_Coeli":    round(grid["Medium_Coeli"], 4),
+                "Descendant":      round(grid["Descendant"], 4),
+                "Imum_Coeli":      round(grid["Imum_Coeli"], 4),
+                "ascendant_sign":  lon_to_sign(grid["Ascendant"]),
+                "asc_sign":        lon_to_sign(grid["Ascendant"]),
+                "mc_sign":         lon_to_sign(grid["Medium_Coeli"]),
+                "total_score":     round(total_score, 4),
+                "raw_score":       round(total_score, 4),
+                "had_key_hit":     had_key_hit,
+                "matches":         all_matches,
             })
 
     minute_scores.sort(key=lambda x: x["total_score"], reverse=True)
+
+    if minute_scores:
+        top_raw = minute_scores[0]["total_score"]
+        for m in minute_scores:
+            if top_raw > 0:
+                m["score"] = round(min(100.0, (m["total_score"] / top_raw) * 100.0), 1)
+            else:
+                m["score"] = 0.0
 
     return {
         "meta": {

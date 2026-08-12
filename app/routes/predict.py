@@ -127,8 +127,10 @@ async def get_monthly_overview(request: MonthlyOverviewRequest, api_key: str = D
     
     return result
 
-# 🔥 ДОБАВЛЯЕМ РОУТ ГОДОВОЙ ДИАГРАММЫ ГАНТА
+# 🔥 РОУТ ГОДОВОЙ ДИАГРАММЫ ГАНТА
 @router.post("/gantt")
+@router.post("/gantt/")
+@router.post("/transits/gantt")
 async def get_annual_gantt(request: AnnualGanttRequest, api_key: str = Depends(verify_internal_api_key)) -> Dict[str, Any]:
     natal = BirthInput(
         name=request.name,

@@ -1,12 +1,13 @@
 import swisseph as swe
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # 🔥 ИМПОРТИРУЕМ НАШИ КОНСТАНТЫ 🔥
 from app.engine.core.constants import ASPECT_RULES, STRICT_POINTS, SWISSEPH_OBJECTS
 
-def calculate_natal_aspects(planets_list: List[Dict[str, Any]], julian_day: float) -> List[Dict[str, Any]]:
+def calculate_natal_aspects(planets_list: List[Dict[str, Any]], julian_day: float, custom_orbs: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
     """
     Рассчитывает все мажорные, минорные аспекты и параллели (по склонению).
+    Поддерживает пользовательские кастомные орбисы для планет и точек.
     """
     clean_aspects = []
     
@@ -68,9 +69,22 @@ def calculate_natal_aspects(planets_list: List[Dict[str, Any]], julian_day: floa
             if diff > 180:
                 diff = 360 - diff
                 
-            # Перебираем правила из констант
+            # Перебираем правила из констант или кастомные орбисы
             for angle, (asp_name, orb_normal, orb_strict) in ASPECT_RULES.items():
-                max_orb = orb_strict if is_strict else orb_normal
+                if custom_orbs and isinstance(custom_orbs, dict):
+                    o1 = float(custom_orbs.get(p1["name"], custom_orbs.get("default", 6.0)))
+                    o2 = float(custom_orbs.get(p2["name"], custom_orbs.get("default", 6.0)))
+                    base_custom_orb = (o1 + o2) / 2.0
+                    
+                    if asp_name in ["conjunction", "opposition", "trine", "square"]:
+                        max_orb = base_custom_orb
+                    elif asp_name == "sextile":
+                        max_orb = base_custom_orb * 0.75
+                    else:
+                        max_orb = base_custom_orb * 0.5
+                else:
+                    max_orb = orb_strict if is_strict else orb_normal
+
                 orb = abs(diff - angle)
                 if orb <= max_orb:
                     clean_aspects.append({

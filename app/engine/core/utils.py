@@ -4,8 +4,7 @@ from datetime import datetime
 import pytz
 import swisseph as swe
 
-# Регулярка для парсинга часовых поясов вида +03:00
-_OFFSET_RE = re.compile(r"^([+-])(\d{2}):?(\d{2})$")
+_OFFSET_RE = re.compile(r"^(?:UTC|GMT)?\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?$", re.IGNORECASE)
 
 def norm_date(s: str) -> str:
     """Приводит дату к стандарту YYYY-MM-DD"""
@@ -13,13 +12,20 @@ def norm_date(s: str) -> str:
     return s
 
 def tz_to_pytz(tz: str) -> str:
-    """Конвертирует строковый таймзону (например, +03:00) в формат pytz (Etc/GMT-3)"""
+    """Конвертирует строковый таймзону (например, +03:00, +3, UTC+3) в формат pytz (Etc/GMT-3)"""
     tz = (tz or "").strip()
     if not tz: return "UTC"
     if "/" in tz and not tz.startswith(("+", "-")): return tz
     m = _OFFSET_RE.match(tz)
-    if not m: return "UTC"
-    sign, hh, mm = m.group(1), int(m.group(2)), int(m.group(3))
+    if not m:
+        try:
+            pytz.timezone(tz)
+            return tz
+        except Exception:
+            return "UTC"
+    sign = m.group(1)
+    hh = int(m.group(2))
+    mm = int(m.group(3)) if m.group(3) else 0
     if mm != 0: return "UTC"
     if sign == "+": return f"Etc/GMT-{hh}"
     return f"Etc/GMT+{hh}"

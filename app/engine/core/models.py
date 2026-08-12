@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional, Dict
 
 VALID_HOUSE_SYSTEMS = {'A', 'B', 'C', 'D', 'F', 'H', 'I', 'i', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'}
 
@@ -25,6 +26,8 @@ class BirthInput:
     lon: float
     house_system: str = "P"
     node_type: str = "true"
+    coord_system: str = ""
+    custom_orbs: Optional[dict] = None
 
     def __post_init__(self):
         object.__setattr__(self, "house_system", sanitize_house_system(self.house_system))

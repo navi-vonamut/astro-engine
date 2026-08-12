@@ -13,6 +13,8 @@ class NatalChartRequest(BaseModel):
     name: Optional[str] = "User"
     house_system: Optional[str] = "P"
     node_type: Optional[str] = "true"
+    coord_system: Optional[str] = ""
+    custom_orbs: Optional[Dict[str, float]] = None
 
 
 class DailyPredictionRequest(BaseModel):
