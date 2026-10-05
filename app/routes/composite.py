@@ -16,9 +16,12 @@ async def composite(request: SynastryRequest, api_key: str = Depends(verify_inte
     p1 = request.person1
     p2 = request.person2
 
+    p1_time = (p1.time or "").strip() or "12:00"
+    p2_time = (p2.time or "").strip() or "12:00"
+
     # Используем метод .composite(), который строит карту мидпойнтов
     result = _engine.composite(
-        BirthInput("Person A", p1.date, p1.time, p1.tz, p1.lat, p1.lon),
-        BirthInput("Person B", p2.date, p2.time, p2.tz, p2.lat, p2.lon),
+        BirthInput(p1.name or "Person A", p1.date, p1_time, p1.tz or "+00:00", p1.lat, p1.lon),
+        BirthInput(p2.name or "Person B", p2.date, p2_time, p2.tz or "+00:00", p2.lat, p2.lon),
     )
     return result

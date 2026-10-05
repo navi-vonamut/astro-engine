@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 
 class NatalChartRequest(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD or YYYY/MM/DD")
-    time: str = Field(..., description="HH:MM:SS")
-    tz: str = Field(..., description="Timezone like +03:00 or Europe/Warsaw")
+    time: Optional[str] = Field("12:00", description="HH:MM:SS (defaults to 12:00 if empty)")
+    tz: Optional[str] = Field("+00:00", description="Timezone like +03:00 or Europe/Warsaw")
     lat: float
     lon: float
     name: Optional[str] = "User"

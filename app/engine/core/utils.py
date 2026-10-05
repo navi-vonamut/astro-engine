@@ -37,11 +37,20 @@ def parse_ymd(date_str: str) -> tuple[int, int, int]:
     return int(y), int(m), int(day)
 
 def parse_hm(time_str: str) -> tuple[int, int]:
-    """Разбивает строку времени на часы и минуты"""
+    """Разбивает строку времени на часы и минуты. При отсутствии или некорректном формате возвращает 12:00 (полдень)"""
     t = (time_str or "").strip()
+    if not t or t.lower() in ("unknown", "none", "null", "undefined"):
+        return 12, 0
     parts = t.split(":")
-    if len(parts) < 2: raise ValueError(f"Bad time format: {time_str}")
-    return int(parts[0]), int(parts[1])
+    try:
+        if len(parts) == 1:
+            h = int(parts[0])
+            return (h if 0 <= h < 24 else 12), 0
+        h = int(parts[0])
+        m = int(parts[1])
+        return (h if 0 <= h < 24 else 12), (m if 0 <= m < 60 else 0)
+    except (ValueError, TypeError):
+        return 12, 0
 
 def get_house_for_degree(degree: float, houses: list[dict]) -> int:
     """Определяет, в какой дом попадает конкретный градус (0-360)"""
