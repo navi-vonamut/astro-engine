@@ -1,14 +1,9 @@
 import swisseph as swe
 from typing import List, Dict, Any, Optional
 
-# 🔥 ИМПОРТИРУЕМ НАШИ КОНСТАНТЫ 🔥
 from app.engine.core.constants import ASPECT_RULES, STRICT_POINTS, SWISSEPH_OBJECTS
 
 def calculate_natal_aspects(planets_list: List[Dict[str, Any]], julian_day: float, custom_orbs: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
-    """
-    Рассчитывает все мажорные, минорные аспекты и параллели (по склонению).
-    Поддерживает пользовательские кастомные орбисы для планет и точек.
-    """
     clean_aspects = []
     
     def get_declination(p_name, jd):
@@ -87,12 +82,23 @@ def calculate_natal_aspects(planets_list: List[Dict[str, Any]], julian_day: floa
 
                 orb = abs(diff - angle)
                 if orb <= max_orb:
+                    dt = 0.005
+                    s1 = p1.get("speed") if p1.get("speed") is not None else 0.0
+                    s2 = p2.get("speed") if p2.get("speed") is not None else 0.0
+                    p1_next = (p1["abs_pos"] + s1 * dt) % 360
+                    p2_next = (p2["abs_pos"] + s2 * dt) % 360
+                    diff_next = abs(p1_next - p2_next)
+                    if diff_next > 180:
+                        diff_next = 360 - diff_next
+                    orb_next = abs(diff_next - angle)
+                    is_app = orb_next < orb
+
                     clean_aspects.append({
                         "p1": p1["name"],
                         "p2": p2["name"],
                         "type": asp_name,
                         "orb": round(orb, 4),
-                        "is_applying": False 
+                        "is_applying": bool(is_app) 
                     })
             
             # Аспекты по склонению (Параллели)
@@ -105,12 +111,21 @@ def calculate_natal_aspects(planets_list: List[Dict[str, Any]], julian_day: floa
                     if diff_decl <= 1.2: 
                         is_same_sign = (decl1 * decl2) > 0
                         asp_type = "parallel" if is_same_sign else "contraparallel"
+                        
+                        dt = 0.005
+                        decl1_next = get_declination(p1["name"], julian_day + dt)
+                        decl2_next = get_declination(p2["name"], julian_day + dt)
+                        is_app_decl = False
+                        if decl1_next is not None and decl2_next is not None:
+                            diff_decl_next = abs(abs(decl1_next) - abs(decl2_next))
+                            is_app_decl = diff_decl_next < diff_decl
+
                         clean_aspects.append({
                             "p1": p1["name"],
                             "p2": p2["name"],
                             "type": asp_type,
                             "orb": round(diff_decl, 4),
-                            "is_applying": False
+                            "is_applying": bool(is_app_decl)
                         })
                         
     return clean_aspects
