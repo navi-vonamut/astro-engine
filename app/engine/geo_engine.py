@@ -116,7 +116,10 @@ class GeoAstroEngine:
 
         # Углы
         try:
-            cusps, ascmc = swe.houses(jd, float(inp.lat), float(inp.lon), b'P')
+            try:
+                cusps, ascmc = swe.houses(jd, float(inp.lat), float(inp.lon), b'P')
+            except Exception:
+                cusps, ascmc = swe.houses(jd, float(inp.lat), float(inp.lon), b'W')
             asc_deg, mc_deg = ascmc[0], ascmc[1]
             ecl_res = swe.calc_ut(jd, swe.ECL_NUT, 0)
             true_obliquity = ecl_res[0][1]
